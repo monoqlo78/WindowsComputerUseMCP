@@ -39,5 +39,53 @@ public static class BuiltInAppDefinitions
             DisplayName = "Adobe After Effects",
             ProcessNames = ["AfterFX"],
         },
+        new GenericAppDefinition
+        {
+            AppId = "indesign",
+            DisplayName = "Adobe InDesign",
+            ProcessNames = ["InDesign"],
+        },
+        new GenericAppDefinition
+        {
+            AppId = "lightroom",
+            DisplayName = "Adobe Lightroom Classic",
+            ProcessNames = ["Lightroom"],
+        },
+        new GenericAppDefinition
+        {
+            AppId = "audition",
+            DisplayName = "Adobe Audition",
+            ProcessNames = ["Adobe Audition"],
+        },
+        new GenericAppDefinition
+        {
+            AppId = "davinciresolve",
+            DisplayName = "DaVinci Resolve",
+            ProcessNames = ["Resolve"],
+        },
+        new GenericAppDefinition
+        {
+            AppId = "capcut",
+            DisplayName = "CapCut",
+            ProcessNames = ["CapCut"],
+        },
+        new GenericAppDefinition
+        {
+            AppId = "figma",
+            DisplayName = "Figma (デスクトップ版)",
+            ProcessNames = ["Figma"],
+        },
+        new GenericAppDefinition
+        {
+            AppId = "gimp",
+            DisplayName = "GIMP",
+            ProcessNames = ["gimp", "gimp-2.10"],
+        },
+        new GenericAppDefinition
+        {
+            AppId = "krita",
+            DisplayName = "Krita",
+            ProcessNames = ["krita"],
+        },
     ];
 }

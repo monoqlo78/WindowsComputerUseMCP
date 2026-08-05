@@ -106,16 +106,26 @@ stdio ベースの MCP サーバーとして起動できます。
   `scene_info` / `execute_code` / `viewport_screenshot` に加え、1枚以上の画像から
   Hyper3D Rodin連携で3Dモデルを生成しシーンへインポートするまでを1コールで行う
   `generate_3d_from_image`（Hyper3D有効化→ジョブ作成→完了待ち→インポートを自動化）を提供します。
-- **`clipchamp` / `photoshop` / `premiere` / `illustrator` / `aftereffects`**: 専用APIを持たない
-  Windowsアプリ向けの汎用UIAスキルパック。要素検索・UI AutomationのInvokePattern実行
-  （非対応時は要素中心を物理クリックへ自動フォールバック）・ウィンドウ内相対座標クリック・
-  テキスト入力・ホットキー送信・スクリーンショット取得を共通のアクション名で提供します。
-  Adobe製品やClipchampなど、UIAの対応範囲がアプリごとに異なる場合でも同じインターフェースで
+- **汎用UIAスキルパック**: 専用APIを持たないWindowsアプリ向け。要素検索・UI Automationの
+  InvokePattern実行（非対応時は要素中心を物理クリックへ自動フォールバック）・ウィンドウ内相対座標
+  クリック・テキスト入力・ホットキー送信・スクリーンショット取得を共通のアクション名で提供します。
+  UIAの対応範囲がアプリごとに異なる場合でも同じインターフェースで
   「まずAPI/UIA、無ければ画面操作」というフォールバック戦略を統一的に扱えます。
+  現在 `Generic/BuiltInAppDefinitions.cs` に登録済みのアプリ:
+  - 動画編集: `clipchamp`（Clipchamp）, `premiere`（Adobe Premiere Pro）,
+    `aftereffects`（Adobe After Effects）, `davinciresolve`（DaVinci Resolve）, `capcut`（CapCut）
+  - デザイン/画像編集: `photoshop`（Adobe Photoshop）, `illustrator`（Adobe Illustrator）,
+    `indesign`（Adobe InDesign）, `lightroom`（Adobe Lightroom Classic）,
+    `figma`（Figma デスクトップ版）, `gimp`（GIMP）, `krita`（Krita）
+  - 音声編集: `audition`（Adobe Audition）
 
 新しいアプリを追加する場合は、専用APIがあれば `WindowsComputerUseMCP.Skills` 配下に新しい
 `ISkillPack` 実装を追加し、専用APIが無ければ `Generic/BuiltInAppDefinitions.cs` に対象プロセス名を
 1行追加するだけで、上記の汎用アクション一式がそのアプリでも使えるようになります。
+
+> **注意**: `ProcessNames` は代表的なプロセス名の想定値です。実際にインストールされているバージョンや
+> エディションによって実行ファイル名が異なる場合があります。対象アプリが `skill_run_action` で
+> 見つからない場合は、タスクマネージャー等で実プロセス名を確認し、該当行を修正してください。
 
 ### Clipchamp・Teams・VS Code等、WebView2/Electron系アプリを操作する場合の注意
 
