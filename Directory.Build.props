@@ -1,0 +1,19 @@
+<Project>
+
+  <!--
+    ソリューション全体の共通設定。
+    個々の .csproj では TargetFramework や OutputType などプロジェクト固有の設定のみを持つ。
+  -->
+  <PropertyGroup>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <Deterministic>true</Deterministic>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <Company>WindowsComputerUseMCP</Company>
+    <Product>WindowsComputerUseMCP</Product>
+    <NeutralLanguage>ja-JP</NeutralLanguage>
+  </PropertyGroup>
+
+</Project>

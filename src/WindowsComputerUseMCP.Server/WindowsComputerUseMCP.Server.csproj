@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\WindowsComputerUseMCP.Core\WindowsComputerUseMCP.Core.csproj" />
+    <ProjectReference Include="..\WindowsComputerUseMCP.Safety\WindowsComputerUseMCP.Safety.csproj" />
+    <ProjectReference Include="..\WindowsComputerUseMCP.Windows\WindowsComputerUseMCP.Windows.csproj" />
+    <ProjectReference Include="..\WindowsComputerUseMCP.Skills\WindowsComputerUseMCP.Skills.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ModelContextProtocol" Version="2.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <!-- マウス座標・スクリーンキャプチャの座標系を実ピクセルに一致させるため、
+         Per-Monitor V2 DPI Aware をマニフェストで明示する。 -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+</Project>

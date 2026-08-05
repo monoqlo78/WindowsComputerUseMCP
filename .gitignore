@@ -1,0 +1,40 @@
+## ビルド出力
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+
+## Visual Studio / Rider
+.vs/
+.idea/
+*.userosscache
+*.sln.docstates
+
+## テスト結果
+[Tt]est[Rr]esult*/
+*.trx
+*.coverage
+*.coveragexml
+
+## NuGet
+*.nupkg
+**/packages/*
+!**/packages/build/
+
+## ローカル専用設定・秘密情報（絶対にコミットしない）
+**/appsettings.*.local.json
+**/usersettings.json
+*.pfx
+*.snk
+.env
+.env.*
+
+## OS/エディタ生成物
+Thumbs.db
+.DS_Store
+*.swp
+
+## 一時ファイル・スクリーンショット保存先
+*.tmp
+/tmp/
+/artifacts/

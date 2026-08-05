@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\WindowsComputerUseMCP.Core\WindowsComputerUseMCP.Core.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <UseWindowsForms>false</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FlaUI.UIA3" Version="5.0.0" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.10" />
+  </ItemGroup>
+
+</Project>
