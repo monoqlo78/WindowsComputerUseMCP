@@ -8,6 +8,9 @@ GitHub Copilot などの MCP (Model Context Protocol) クライアントから�
 完結しない複雑なアプリケーションも、`screen_capture` + 座標操作 + 画面差分検出を組み合わせて
 人間のように自在に操作できるようにすることです（詳細は [ROADMAP.md](ROADMAP.md) を参照）。
 
+> **ライセンス**: 個人利用・非商用利用は無償です。商用利用には別途ライセンス契約が必要です。
+> 詳細は [LICENSE.md](LICENSE.md) を参照してください。
+
 ## 構成
 
 | プロジェクト | 役割 |
@@ -164,3 +167,14 @@ ControlPanel の「監査ログ」テーブルからも最新の記録を確認�
 フェーズ1〜7が完了しています（[ROADMAP.md](ROADMAP.md) 参照）。基本ツール群・入力操作・画面差分検出・
 緊急停止 UI まで一通り実装・動作確認済みです。Clipchamp / Blender / Adobe 製品のような、UI Automation だけでは
 完結しないアプリへの本格対応は、既存の汎用ツールの組み合わせで到達可能かを検証する継続課題です。
+
+対応アプリのスキルパックは今後も継続的に拡充していく予定です（Clipchamp / Photoshop / Premiere Pro /
+Illustrator / After Effects の実操作精度向上、DaVinci Resolve・CapCut・Figma 等への対応拡大など）。
+新しいアプリへの対応リクエストや、既存スキルパックの改善案がある場合は Issue で管理してください。
+
+## ライセンス
+
+本ソフトウェアは **個人利用・非商用利用に限り無償** で提供されます。
+商用目的（企業内業務利用、製品への組み込み、受託開発等）で利用する場合は、
+事前に著作権者との商用ライセンス契約が必要です。詳細・お問い合わせは
+[LICENSE.md](LICENSE.md) を参照してください（連絡先: monoqlo78@gmail.com）。
