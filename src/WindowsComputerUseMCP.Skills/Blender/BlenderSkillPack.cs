@@ -106,7 +106,7 @@ public sealed class BlenderSkillPack(BlenderBridgeClient bridge, ILogger<Blender
         try
         {
             var result = await bridge.SendCommandAsync(commandType, parameters, cancellationToken: cancellationToken).ConfigureAwait(false);
-            return SkillActionOutcome.Ok(JsonElementToPlainObject(result));
+            return SkillActionOutcome.Ok(SkillJson.ToPlainObject(result));
         }
         catch (BlenderBridgeException ex)
         {
@@ -165,7 +165,7 @@ public sealed class BlenderSkillPack(BlenderBridgeClient bridge, ILogger<Blender
         try
         {
             var result = await bridge.SendCommandAsync("execute_code", new { code }, cancellationToken: cancellationToken).ConfigureAwait(false);
-            return SkillActionOutcome.Ok(JsonElementToPlainObject(result), "Hyper3D Rodin連携が有効です。");
+            return SkillActionOutcome.Ok(SkillJson.ToPlainObject(result), "Hyper3D Rodin連携が有効です。");
         }
         catch (BlenderBridgeException ex)
         {
@@ -285,15 +285,5 @@ public sealed class BlenderSkillPack(BlenderBridgeClient bridge, ILogger<Blender
     }
 
     /// <summary>JsonElement を、呼び出し側でそのままJSONシリアライズし直せる素朴なオブジェクトグラフに変換する。</summary>
-    private static object? JsonElementToPlainObject(JsonElement element) => element.ValueKind switch
-    {
-        JsonValueKind.Object => element.EnumerateObject().ToDictionary(p => p.Name, p => JsonElementToPlainObject(p.Value)),
-        JsonValueKind.Array => element.EnumerateArray().Select(JsonElementToPlainObject).ToList(),
-        JsonValueKind.String => element.GetString(),
-        JsonValueKind.Number => element.TryGetInt64(out var l) ? l : element.GetDouble(),
-        JsonValueKind.True => true,
-        JsonValueKind.False => false,
-        JsonValueKind.Null or JsonValueKind.Undefined => null,
-        _ => element.GetRawText(),
-    };
+    private static object? JsonElementToPlainObject(JsonElement element) => SkillJson.ToPlainObject(element);
 }

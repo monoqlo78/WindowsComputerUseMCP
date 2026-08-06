@@ -106,6 +106,24 @@ stdio ベースの MCP サーバーとして起動できます。
   `scene_info` / `execute_code` / `viewport_screenshot` に加え、1枚以上の画像から
   Hyper3D Rodin連携で3Dモデルを生成しシーンへインポートするまでを1コールで行う
   `generate_3d_from_image`（Hyper3D有効化→ジョブ作成→完了待ち→インポートを自動化）を提供します。
+- **`illustrator`**: Adobe Illustratorが長年公式に提供しているCOM自動化
+  （ProgID `Illustrator.Application`）と、その上で動く ExtendScript（JavaScript）実行API
+  （`Application.DoJavaScript`）を直接呼び出す専用ブリッジです。画面クリックを一切使わず、
+  ドキュメント情報取得（`document_info`）、任意ExtendScript実行（`execute_script`）、
+  矩形/楕円/テキスト作成（`create_rectangle` / `create_ellipse` / `create_text_frame`）、
+  塗り色設定（`set_fill_color`）、保存/読み込み/PNG・JPG・PDF書き出し
+  （`save_document` / `open_document` / `export_document`）を提供します。
+  Illustratorが起動しCOM登録済みであることが前提（自動起動はしません）。
+- **`figma`**: Figmaデスクトップ版はCOMや外部TCPサーバーのような公式連携APIを持たないため、
+  同梱の開発用プラグイン（`tools/figma-plugin/`）をFigma側で実行し、そのプラグインが
+  本サーバーの開くWebSocketサーバー（既定 `ws://127.0.0.1:9877/`、接続方向はBlenderと逆で
+  Figma側から接続しにいく）へつなぎ込む方式でブリッジしています。
+  ノード作成（`create_rectangle` / `create_ellipse` / `create_text`）、塗り色設定
+  （`set_fill_color`）、削除（`delete_node`）、選択/ページ情報取得
+  （`get_selection` / `list_pages` / `document_info`）、画像書き出し（`export_node_image`）、
+  任意コード実行（`execute_plugin_code`）を提供します。事前に
+  `tools/figma-plugin/README.md` の手順でプラグインをインポート・実行しておく必要があります
+  （未接続時は `is_connected` で確認可能）。
 - **汎用UIAスキルパック**: 専用APIを持たないWindowsアプリ向け。要素検索・UI Automationの
   InvokePattern実行（非対応時は要素中心を物理クリックへ自動フォールバック）・ウィンドウ内相対座標
   クリック・テキスト入力・ホットキー送信・スクリーンショット取得を共通のアクション名で提供します。
@@ -114,10 +132,12 @@ stdio ベースの MCP サーバーとして起動できます。
   現在 `Generic/BuiltInAppDefinitions.cs` に登録済みのアプリ:
   - 動画編集: `clipchamp`（Clipchamp）, `premiere`（Adobe Premiere Pro）,
     `aftereffects`（Adobe After Effects）, `davinciresolve`（DaVinci Resolve）, `capcut`（CapCut）
-  - デザイン/画像編集: `photoshop`（Adobe Photoshop）, `illustrator`（Adobe Illustrator）,
+  - デザイン/画像編集: `photoshop`（Adobe Photoshop）,
     `indesign`（Adobe InDesign）, `lightroom`（Adobe Lightroom Classic）,
-    `figma`（Figma デスクトップ版）, `gimp`（GIMP）, `krita`（Krita）
+    `gimp`（GIMP）, `krita`（Krita）
   - 音声編集: `audition`（Adobe Audition）
+
+  ※ `illustrator` と `figma` は専用スキルパック（上記）に昇格済みのため、このリストには含まれません。
 
 新しいアプリを追加する場合は、専用APIがあれば `WindowsComputerUseMCP.Skills` 配下に新しい
 `ISkillPack` 実装を追加し、専用APIが無ければ `Generic/BuiltInAppDefinitions.cs` に対象プロセス名を

@@ -1,0 +1,11 @@
+{
+  "name": "WindowsComputerUseMCP Bridge",
+  "id": "windowscomputerusemcp-bridge-dev",
+  "api": "1.0.0",
+  "main": "code.js",
+  "editorType": ["figma", "figjam"],
+  "networkAccess": {
+    "allowedDomains": ["http://127.0.0.1:9877", "ws://127.0.0.1:9877"],
+    "reasoning": "WindowsComputerUseMCPサーバー（AIエージェント）とローカルWebSocketで通信し、キャンバス操作コマンドを受け取るため。"
+  }
+}

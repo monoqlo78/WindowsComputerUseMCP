@@ -29,12 +29,6 @@ public static class BuiltInAppDefinitions
         },
         new GenericAppDefinition
         {
-            AppId = "illustrator",
-            DisplayName = "Adobe Illustrator",
-            ProcessNames = ["Illustrator"],
-        },
-        new GenericAppDefinition
-        {
             AppId = "aftereffects",
             DisplayName = "Adobe After Effects",
             ProcessNames = ["AfterFX"],
@@ -68,12 +62,6 @@ public static class BuiltInAppDefinitions
             AppId = "capcut",
             DisplayName = "CapCut",
             ProcessNames = ["CapCut"],
-        },
-        new GenericAppDefinition
-        {
-            AppId = "figma",
-            DisplayName = "Figma (デスクトップ版)",
-            ProcessNames = ["Figma"],
         },
         new GenericAppDefinition
         {

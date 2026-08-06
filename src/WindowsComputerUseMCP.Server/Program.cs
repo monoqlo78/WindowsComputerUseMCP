@@ -18,7 +18,9 @@ using WindowsComputerUseMCP.Windows.Services;
 using WindowsComputerUseMCP.Skills;
 using WindowsComputerUseMCP.Skills.Abstractions;
 using WindowsComputerUseMCP.Skills.Blender;
+using WindowsComputerUseMCP.Skills.Figma;
 using WindowsComputerUseMCP.Skills.Generic;
+using WindowsComputerUseMCP.Skills.Illustrator;
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -53,6 +55,13 @@ builder.Services.AddHostedService<WindowsComputerUseMCP.Server.Services.ControlP
 // アプリスキルパック層（各アプリのAPI連携 + 画面操作フォールバックをまとめた「スキル」）
 builder.Services.AddSingleton<BlenderBridgeClient>();
 builder.Services.AddSingleton<ISkillPack, BlenderSkillPack>();
+builder.Services.AddSingleton<ISkillPack, IllustratorSkillPack>();
+
+// Figmaブリッジ（本サーバーがWebSocketサーバーを開き、Figma側の専用プラグインが接続してくる）
+builder.Services.AddSingleton<FigmaBridgeServer>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<FigmaBridgeServer>());
+builder.Services.AddSingleton<ISkillPack, FigmaSkillPack>();
+
 foreach (var appDefinition in BuiltInAppDefinitions.All)
 {
     builder.Services.AddSingleton<ISkillPack>(sp => new GenericUiaSkillPack(
