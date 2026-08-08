@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
 
@@ -23,6 +23,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\WindowsComputerUseMCP.Core\WindowsComputerUseMCP.Core.csproj" />
     <ProjectReference Include="..\..\src\WindowsComputerUseMCP.Safety\WindowsComputerUseMCP.Safety.csproj" />
+    <ProjectReference Include="..\..\src\WindowsComputerUseMCP.Skills\WindowsComputerUseMCP.Skills.csproj" />
   </ItemGroup>
 
 </Project>

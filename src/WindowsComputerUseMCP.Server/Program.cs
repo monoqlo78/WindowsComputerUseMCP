@@ -21,6 +21,7 @@ using WindowsComputerUseMCP.Skills.Blender;
 using WindowsComputerUseMCP.Skills.Figma;
 using WindowsComputerUseMCP.Skills.Generic;
 using WindowsComputerUseMCP.Skills.Illustrator;
+using WindowsComputerUseMCP.Skills.Slack;
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -56,6 +57,7 @@ builder.Services.AddHostedService<WindowsComputerUseMCP.Server.Services.ControlP
 builder.Services.AddSingleton<BlenderBridgeClient>();
 builder.Services.AddSingleton<ISkillPack, BlenderSkillPack>();
 builder.Services.AddSingleton<ISkillPack, IllustratorSkillPack>();
+builder.Services.AddSingleton<ISkillPack, SlackSkillPack>();
 
 // Figmaブリッジ（本サーバーがWebSocketサーバーを開き、Figma側の専用プラグインが接続してくる）
 builder.Services.AddSingleton<FigmaBridgeServer>();
