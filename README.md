@@ -84,8 +84,108 @@ stdio ベースの MCP サーバーとして起動できます。
 | `mouse_move` / `mouse_click` / `mouse_drag` / `mouse_scroll` | 座標ベースのマウス操作 |
 | `keyboard_type_text` / `keyboard_press` / `keyboard_hotkey` | キーボード入力操作 |
 | `wait_for_screen_change` | 操作前後の画面差分を検出し、変化を待機・確認 |
+| `background_desktop_*` | ユーザーの画面に映らない「隠しデスクトップ」上でアプリを起動・操作（後述） |
 
 すべての入力系ツールは Safety 層のポリシー判定（許可アプリ／危険操作の承認要求／緊急停止）を経由します。
+
+## フォアグラウンド操作とバックグラウンド操作
+
+「AIが操作している間、自分のPCが使えなくなるのでは？」という点は本MCPの重要な論点です。
+実際には、**操作の種類によってフォアグラウンドが必要かどうかが異なります**。
+
+### 1. もともとバックグラウンドで完結するもの（画面を奪わない）
+
+| 手段 | 対象 | 理由 |
+|---|---|---|
+| スキルパックのAPIブリッジ | Blender（TCP 9876）、Illustrator（COM `DoJavaScript`）、Figma（WebSocket 9877） | アプリの公式スクリプティングAPIを直接叩くため、画面操作を一切伴わない |
+| `ui_invoke` | UI Automation に対応したアプリ全般 | InvokePattern 等はメッセージベースで、前面化やフォーカスを必要としない |
+| `screen_capture`（`windowHandle` 指定） | ほぼすべてのウィンドウ | `PrintWindow` + `PW_RENDERFULLCONTENT` により、背面や一部隠れたウィンドウも描画内容を取得できる |
+
+つまり **「見る」と「APIで動かす」はすでにバックグラウンドで可能** です。
+
+### 2. フォアグラウンドが必要なもの
+
+`mouse_move` / `mouse_click` / `mouse_drag` / `mouse_scroll` / `keyboard_*` は
+Win32 の `SendInput` を使用します。`SendInput` は**入力デスクトップ（＝ユーザーが実際に見ている画面）
+のハードウェア入力キューに注入する**API であるため、対象ウィンドウが前面にある必要があります。
+
+### 3. 「サブモニター（スクリーン2）でやらせる」では解決しない理由
+
+Windows では、複数モニターを繋いでいても **1セッション＝1デスクトップ＝1つのカーソル・1つのフォーカス・
+1つの入力キュー**です。モニターは同じデスクトップの表示領域が広がるだけなので、
+サブモニターにウィンドウを置いてもマウスカーソルとフォーカスは共有されたままです。分離するには、
+
+1. **同一セッション内の別デスクトップオブジェクト**（本MCPが採用）
+2. 別の Windows セッション（RDP・ユーザー切り替え）
+3. VM / Windows Sandbox
+
+のいずれかが必要です。
+
+### 4. `background_desktop_*` ツール（隠しデスクトップ方式）
+
+Win32 の `CreateDesktopW` で**画面に表示されないデスクトップオブジェクト**を作り、
+専用ワーカースレッドを `SetThreadDesktop` でそこに束縛して操作します。
+アプリは `STARTUPINFO.lpDesktop` 指定で最初からその隠しデスクトップ上に起動されるため、
+**ユーザーが見ている画面には一切現れません**。
+
+| ツール名 | 概要 |
+|---|---|
+| `background_desktop_create` | 隠しデスクトップを作成 |
+| `background_desktop_list` | 隠しデスクトップと、その上のウィンドウ数を一覧 |
+| `background_desktop_launch` | 隠しデスクトップ上でアプリを起動 |
+| `background_desktop_window_list` | 隠しデスクトップ上のウィンドウを列挙（通常の `window_list` では見えない） |
+| `background_desktop_capture` | 隠しデスクトップ上のウィンドウをキャプチャ |
+| `background_desktop_click` | 隠しデスクトップ上でクリック |
+| `background_desktop_type_text` | 隠しデスクトップ上でテキスト入力 |
+| `background_desktop_send_keys` | 隠しデスクトップ上でキー送信 |
+| `background_desktop_switch` | 一時的に隠しデスクトップを画面に表示（確認用。既定で自動復帰） |
+| `background_desktop_close` | 隠しデスクトップと起動したプロセスを終了 |
+
+使用例（AIエージェントからの呼び出しイメージ）:
+
+```jsonc
+// 1. 隠しデスクトップを作る
+{ "tool": "background_desktop_create", "args": { "name": "work1" } }
+
+// 2. その上でアプリを起動（ユーザーの画面には出ない）
+{ "tool": "background_desktop_launch",
+  "args": { "desktopName": "work1", "executablePath": "notepad.exe" } }
+
+// 3. ウィンドウを探して「見る」
+{ "tool": "background_desktop_window_list", "args": { "desktopName": "work1" } }
+{ "tool": "background_desktop_capture",
+  "args": { "desktopName": "work1", "windowHandle": 7020710 } }
+
+// 4. 「手を動かす」
+{ "tool": "background_desktop_type_text",
+  "args": { "desktopName": "work1", "windowHandle": 7020710, "text": "Hello" } }
+
+// 5. 後片付け
+{ "tool": "background_desktop_close", "args": { "desktopName": "work1" } }
+```
+
+#### 入力方式の自動切り替え
+
+隠しデスクトップは入力デスクトップではないため `SendInput` が機能しません。
+そこで本MCPは、対象デスクトップが入力デスクトップかどうかを実行時に判定し、
+**非対話デスクトップでは `WM_CHAR` / `WM_KEYDOWN` / `WM_LBUTTONDOWN` などの
+ウィンドウメッセージを直接ポストする方式へ自動的にフォールバック**します。
+呼び出し側はツールの使い分けを意識する必要はありません。
+
+#### 既知の制約（正直な注意点）
+
+- **GPU描画に強く依存するアプリは動かない場合がある**
+  Electron / Chromium 系（Clipchamp、Teams、VS Code、Figmaデスクトップ版）や
+  Blender のビューポートは、非対話デスクトップでは真っ白に描画される、
+  あるいは起動自体に失敗することがあります。
+  → これらは **スキルパックのAPIブリッジ（1.）を使う方が確実**です。
+- **修飾キー同時押し（Ctrl+C 等）の再現性が下がる**
+  メッセージベース入力では、アプリ側が `GetKeyState` で修飾キー状態を見る実装だと
+  ホットキーが効かない場合があります。
+  → メニュー操作は `ui_invoke`、またはアプリ固有のスキルパックを優先してください。
+- **画面解像度・DPIは既存デスクトップを継承**し、任意に変更することはできません。
+- 一部のインストーラは対話デスクトップを明示的に要求するため起動できません。
+
 
 ## アプリ別スキルパック（Blender / Adobe / Clipchamp など）
 
@@ -195,7 +295,10 @@ ControlPanel の「監査ログ」テーブルからも最新の記録を確認�
 ## 現在のステータス
 
 フェーズ1〜7が完了しています（[ROADMAP.md](ROADMAP.md) 参照）。基本ツール群・入力操作・画面差分検出・
-緊急停止 UI まで一通り実装・動作確認済みです。Clipchamp / Blender / Adobe 製品のような、UI Automation だけでは
+緊急停止 UI まで一通り実装・動作確認済みです。加えて、ユーザーの画面を占有せずに操作できる
+**バックグラウンドデスクトップ（`background_desktop_*`）** を実装し、隠しデスクトップ上での
+アプリ起動 → ウィンドウ列挙 → キャプチャ → テキスト入力 → 終了までを実機で検証済みです。
+Clipchamp / Blender / Adobe 製品のような、UI Automation だけでは
 完結しないアプリへの本格対応は、既存の汎用ツールの組み合わせで到達可能かを検証する継続課題です。
 
 対応アプリのスキルパックは今後も継続的に拡充していく予定です（Clipchamp / Photoshop / Premiere Pro /

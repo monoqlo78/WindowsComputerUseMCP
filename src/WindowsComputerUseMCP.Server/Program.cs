@@ -47,6 +47,7 @@ builder.Services.AddSingleton<IScreenCaptureService, ScreenCaptureService>();
 builder.Services.AddSingleton<IUiAutomationService, UiAutomationService>();
 builder.Services.AddSingleton<IInputService, InputService>();
 builder.Services.AddSingleton<IScreenChangeService, ScreenChangeService>();
+builder.Services.AddSingleton<IBackgroundDesktopService, BackgroundDesktopService>();
 
 // ControlPanel 連携（緊急停止ホットキー・IPCサーバー）
 builder.Services.AddHostedService<HotkeyListenerService>();

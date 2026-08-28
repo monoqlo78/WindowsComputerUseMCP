@@ -10,7 +10,15 @@
     <LangVersion>latest</LangVersion>
     <Deterministic>true</Deterministic>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <NoWarn>$(NoWarn);CS1591;NU1900</NoWarn>
+    <!--
+      NU1900 は「NuGet の脆弱性データベースを取得できなかった」というネットワーク起因の警告であり、
+      コード品質の問題ではない。オフラインや制限付きネットワーク下でもビルドできるよう抑止する。
+      NuGetAudit は既定で有効だが、監査データを取得できない環境ではビルドを止めてしまうため、
+      環境変数 ENABLE_NUGET_AUDIT=true が指定された場合のみ有効化する。
+    -->
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1900</WarningsNotAsErrors>
+    <NuGetAudit Condition="'$(ENABLE_NUGET_AUDIT)' != 'true'">false</NuGetAudit>
     <Company>WindowsComputerUseMCP</Company>
     <Product>WindowsComputerUseMCP</Product>
     <NeutralLanguage>ja-JP</NeutralLanguage>
