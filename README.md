@@ -1,4 +1,12 @@
-# WindowsComputerUseMCP
+<div align="center">
+  <img src="assets/logo-256.png" alt="WindowsComputerUseMCP ロゴ" width="140">
+  <h1>WindowsComputerUseMCP</h1>
+  <p><strong>AI エージェントが Windows のデスクトップアプリを「見て・考えて・操作する」ための MCP サーバー</strong></p>
+</div>
+
+<p align="center">
+  <img src="assets/banner.png" alt="1 つのエージェントから Blender・Illustrator/Figma・Clipchamp などを操作するイメージ" width="820">
+</p>
 
 GitHub Copilot などの MCP (Model Context Protocol) クライアントから、Windows 上の**任意のデスクトップアプリケーション**を
 人間と同じ手段（画面認識・マウス・キーボード・UI Automation）で操作するためのローカル MCP サーバーです。
@@ -304,6 +312,33 @@ Clipchamp / Blender / Adobe 製品のような、UI Automation だけでは
 対応アプリのスキルパックは今後も継続的に拡充していく予定です（Clipchamp / Photoshop / Premiere Pro /
 Illustrator / After Effects の実操作精度向上、DaVinci Resolve・CapCut・Figma 等への対応拡大など）。
 新しいアプリへの対応リクエストや、既存スキルパックの改善案がある場合は Issue で管理してください。
+
+## ロゴ・ブランドアセット
+
+ロゴは Azure OpenAI (`gpt-image-2`) で生成し、`assets/` 配下にコミットしています。
+
+| ファイル | 用途 |
+|---|---|
+| `assets/logo.png` | マスター（1024×1024、白背景） |
+| `assets/logo-transparent.png` | 背景透過版（1024×1024） |
+| `assets/logo-512.png` 〜 `logo-32.png` | 各サイズの透過 PNG（512 / 256 / 128 / 64 / 32） |
+| `assets/app.ico` | Windows 実行ファイル用アイコン（16〜256px マルチ解像度）。ControlPanel の `ApplicationIcon` に設定済み |
+| `assets/banner.png` | README ヘッダー用の横長バナー |
+| `assets/candidates/` | 不採用のデザイン案（差し替え用に保持） |
+
+デザインの意図は、**ウィンドウ枠 ＝ Windows アプリ**、**回路で描かれたカーソル ＝ AI エージェントによる操作**です。
+バナーでは 1 つのエージェントから 3D（Blender）・デザイン（Illustrator / Figma）・動画編集（Clipchamp）へ
+接続が伸びる様子を表しています。
+
+配色は次のとおりです。
+
+| 役割 | カラー |
+|---|---|
+| ベース（濃紺） | `#021A52` |
+| プライマリ（青） | `#0F7BF0` |
+| アクセント（シアン） | `#2FEFFF` |
+
+> ロゴは本プロジェクトの識別に用いるものです。ライセンス条件（非商用）はロゴにも同様に適用されます。
 
 ## ライセンス
 
