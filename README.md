@@ -292,10 +292,29 @@ MCP の JSON-RPC (stdio) は素通しで流れます。ラッパーによる通�
 #### 注意点
 
 - **Copilot CLI / VS Code の再起動が必要**です（設定は起動時にのみ読まれます）。
-- 別のプラグイン（例: power-pages）が独自に Playwright MCP を起動していると、
-  同種のツールが二重に見えます。必要に応じてそちらを無効化してください。
 - 隠しデスクトップ上のブラウザも `background_desktop_capture` で目視確認できます。
 - Playwright の操作は CDP 経由なので、OS の入力デスクトップに依存せず完全に動作します。
+
+#### power-pages プラグインの Playwright もバックグラウンド化する
+
+GitHub Copilot CLI の **power-pages プラグイン**は、`mcp-config.json` とは別に
+独自の Playwright MCP を起動します。その既定設定は `--start-fullscreen` を含むため、
+`playwright-bg` を登録しても**こちらが前面化してフォーカスを奪い続けます**。
+
+同梱のパッチスクリプトで、プラグイン側も同じランチャー経由に切り替えられます。
+
+```powershell
+# 適用（冪等。適用済みなら何もしない）
+.\scripts\patch-power-pages-playwright.ps1
+
+# 元に戻す
+.\scripts\patch-power-pages-playwright.ps1 -Revert
+```
+
+- 変更前の内容は `launch-playwright-mcp.js.orig` として保存されます。
+- `wcu-desktop-launcher.exe` が見つからない場合や、環境変数
+  `POWER_PAGES_PLAYWRIGHT_FOREGROUND=1` を設定した場合は**元の前面起動へ自動的に戻ります**。
+- **プラグインが更新されると変更は失われます。** その場合は再実行してください。
 
 
 ## アプリ別スキルパック（Blender / Adobe / Clipchamp など）
