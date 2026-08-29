@@ -38,3 +38,6 @@ Thumbs.db
 *.tmp
 /tmp/
 /artifacts/
+
+## Playwright MCP が実行時に生成する作業ディレクトリ
+.playwright-mcp/

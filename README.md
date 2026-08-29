@@ -29,6 +29,7 @@ GitHub Copilot などの MCP (Model Context Protocol) クライアントから�
 | `WindowsComputerUseMCP.Skills` | アプリ別「スキルパック」フレームワーク（Blender専用APIブリッジ、Adobe/Clipchamp向け汎用UIA操作など） |
 | `WindowsComputerUseMCP.Server` | MCP stdio サーバー本体（ツール登録・DI・ホスティング） |
 | `WindowsComputerUseMCP.ControlPanel` | 常時状態確認・緊急停止操作・監査ログ閲覧用の WPF アプリ |
+| `WindowsComputerUseMCP.DesktopLauncher` | 任意のコマンドを隠しデスクトップ上で起動する汎用ラッパー（stdio 素通し）。Playwright MCP などをバックグラウンド化する |
 | `WindowsComputerUseMCP.Tests` | 単体テスト |
 
 詳細な設計は [ARCHITECTURE.md](ARCHITECTURE.md)、安全設計は [SECURITY.md](SECURITY.md) を参照してください。
@@ -62,15 +63,20 @@ dotnet test
 
 1. 実行中の `WindowsComputerUseMCP.Server` プロセスを停止する
 2. `dotnet publish -c Release` を実行して `%LOCALAPPDATA%\WindowsComputerUseMCP\staging` に出力する
+   （MCP サーバー本体と `wcu-desktop-launcher` の両方）
 3. `%LOCALAPPDATA%\WindowsComputerUseMCP\current` へ差し替える
+   （ランチャーは `current\launcher\`、ブラウザ設定は `current\playwright-mcp-background.config.json`）
 4. MCP ハンドシェイク（`initialize` → `tools/list`）を実行し、ツールが公開されているか検証する
 5. `-UpdateClientConfig` 指定時は `%USERPROFILE%\.copilot\mcp-config.json` の `command` を更新する
    （変更前の内容はタイムスタンプ付き `.bak` として保存されます）
+6. あわせて **`playwright-bg`**（バックグラウンドで動く Playwright MCP）を登録する
+   （`-SkipPlaywright` を付けると登録をスキップできます）
 
 配置先の実行ファイルは次のパスになります。
 
 ```
 %LOCALAPPDATA%\WindowsComputerUseMCP\current\WindowsComputerUseMCP.Server.exe
+%LOCALAPPDATA%\WindowsComputerUseMCP\current\launcher\wcu-desktop-launcher.exe
 ```
 
 > **なぜ `bin\Debug` を直接登録してはいけないのか**
@@ -217,16 +223,79 @@ Win32 の `CreateDesktopW` で**画面に表示されないデスクトップオ
 #### 既知の制約（正直な注意点）
 
 - **GPU描画に強く依存するアプリは動かない場合がある**
-  Electron / Chromium 系（Clipchamp、Teams、VS Code、Figmaデスクトップ版）や
+  Electron 系（Clipchamp、Teams、VS Code、Figmaデスクトップ版）や
   Blender のビューポートは、非対話デスクトップでは真っ白に描画される、
   あるいは起動自体に失敗することがあります。
   → これらは **スキルパックのAPIブリッジ（1.）を使う方が確実**です。
+  なお **Chromium / Microsoft Edge は隠しデスクトップ上でも正常に描画される**ことを
+  実測で確認済みです（後述の `wcu-desktop-launcher` はこれを利用しています）。
 - **修飾キー同時押し（Ctrl+C 等）の再現性が下がる**
   メッセージベース入力では、アプリ側が `GetKeyState` で修飾キー状態を見る実装だと
   ホットキーが効かない場合があります。
   → メニュー操作は `ui_invoke`、またはアプリ固有のスキルパックを優先してください。
 - **画面解像度・DPIは既存デスクトップを継承**し、任意に変更することはできません。
 - 一部のインストーラは対話デスクトップを明示的に要求するため起動できません。
+
+### 5. `wcu-desktop-launcher` — 他のMCPサーバーごとバックグラウンドへ追い出す
+
+Playwright MCP のようにブラウザを起動する外部 MCP サーバーは、
+そのままだと**ツールを呼ぶたびにブラウザが前面に出てフォーカスを奪います**。
+これを解決するのが、本リポジトリに同梱の汎用ラッパー **`wcu-desktop-launcher.exe`** です。
+
+```
+wcu-desktop-launcher --desktop <デスクトップ名> [--cwd <作業ディレクトリ>] -- <コマンド> [引数...]
+```
+
+原理はシンプルで、Windows の子プロセスは
+**`STARTUPINFO.lpDesktop` で指定されたデスクトップを継承する**という仕様を使います。
+MCP サーバー本体（Node.js プロセス）を隠しデスクトップ上で起動すれば、
+そこから起動されるブラウザも自動的に同じ隠しデスクトップに乗ります。
+
+重要なのは、**デスクトップの割り当てはウィンドウと入力キューにしか影響せず、
+標準入出力には一切影響しない**という点です。
+ランチャーは自分の stdin / stdout / stderr をそのまま子へ継承させるため、
+MCP の JSON-RPC (stdio) は素通しで流れます。ラッパーによる通信オーバーヘッドはありません。
+
+さらにランチャーは `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` を設定したジョブオブジェクトに
+子プロセスを登録します。MCP クライアントが切断してランチャーが終了すると、
+**ブラウザを含む子プロセスツリーがまとめて確実に終了**し、
+隠しデスクトップ上にゾンビプロセスが溜まりません。
+
+#### 登録例（Playwright MCP をバックグラウンド化する）
+
+`scripts/install-mcp-server.ps1 -UpdateClientConfig` を実行すると、
+`playwright-bg` というエントリが自動で登録されます。手動で書く場合は次の形です。
+
+```jsonc
+{
+  "mcpServers": {
+    "playwright-bg": {
+      "type": "local",
+      "command": "%LOCALAPPDATA%\\WindowsComputerUseMCP\\current\\launcher\\wcu-desktop-launcher.exe",
+      "args": [
+        "--desktop", "WCU_Background", "--",
+        "cmd.exe", "/c", "npx", "-y", "@playwright/mcp@latest",
+        "--browser", "msedge",
+        "--config", "%LOCALAPPDATA%\\WindowsComputerUseMCP\\current\\playwright-mcp-background.config.json"
+      ],
+      "tools": ["*"]
+    }
+  }
+}
+```
+
+- `npx` はバッチファイル（`.cmd`）なので、`cmd.exe /c` を経由させる必要があります。
+- `config/playwright-mcp-background.config.json` は
+  `--start-fullscreen` を含まない固定サイズ（1920×1080）のブラウザ起動オプションです。
+  フォアグラウンドを奪う設定を持ち込まないために必ず指定してください。
+
+#### 注意点
+
+- **Copilot CLI / VS Code の再起動が必要**です（設定は起動時にのみ読まれます）。
+- 別のプラグイン（例: power-pages）が独自に Playwright MCP を起動していると、
+  同種のツールが二重に見えます。必要に応じてそちらを無効化してください。
+- 隠しデスクトップ上のブラウザも `background_desktop_capture` で目視確認できます。
+- Playwright の操作は CDP 経由なので、OS の入力デスクトップに依存せず完全に動作します。
 
 
 ## アプリ別スキルパック（Blender / Adobe / Clipchamp など）
@@ -340,6 +409,8 @@ ControlPanel の「監査ログ」テーブルからも最新の記録を確認�
 緊急停止 UI まで一通り実装・動作確認済みです。加えて、ユーザーの画面を占有せずに操作できる
 **バックグラウンドデスクトップ（`background_desktop_*`）** を実装し、隠しデスクトップ上での
 アプリ起動 → ウィンドウ列挙 → キャプチャ → テキスト入力 → 終了までを実機で検証済みです。
+さらに **`wcu-desktop-launcher`** により、Playwright MCP のような外部 MCP サーバーごと
+隠しデスクトップへ追い出す方式を実装し、ブラウザ操作がフォアグラウンドを奪わないことを実機検証済みです。
 Clipchamp / Blender / Adobe 製品のような、UI Automation だけでは
 完結しないアプリへの本格対応は、既存の汎用ツールの組み合わせで到達可能かを検証する継続課題です。
 
@@ -358,7 +429,15 @@ Illustrator / After Effects の実操作精度向上、DaVinci Resolve・CapCut�
 | `assets/logo-512.png` 〜 `logo-32.png` | 各サイズの透過 PNG（512 / 256 / 128 / 64 / 32） |
 | `assets/app.ico` | Windows 実行ファイル用アイコン（16〜256px マルチ解像度）。ControlPanel の `ApplicationIcon` に設定済み |
 | `assets/banner.png` | README ヘッダー用の横長バナー |
+| `assets/avatar-460.png` | GitHub アカウント／Organization のアバター用（460×460、円形クロップに耐える構図） |
 | `assets/candidates/` | 不採用のデザイン案（差し替え用に保持） |
+
+> **GitHub 上のリポジトリアイコンについて**
+> GitHub にはリポジトリ固有のアイコン設定がなく、リポジトリ名の左に表示される丸いアイコンは
+> **オーナー（ユーザー / Organization）のアバター**です。したがって `assets/` に画像を push しても変わりません。
+> 変更するには <https://github.com/settings/profile> で `assets/avatar-460.png` を手動アップロードしてください
+> （アバターの設定は GitHub API では行えません）。
+> リポジトリの OGP 画像は Settings → Social preview から `assets/banner.png` を設定できます。
 
 デザインの意図は、**ウィンドウ枠 ＝ Windows アプリ**、**回路で描かれたカーソル ＝ AI エージェントによる操作**です。
 バナーでは 1 つのエージェントから 3D（Blender）・デザイン（Illustrator / Figma）・動画編集（Clipchamp）へ

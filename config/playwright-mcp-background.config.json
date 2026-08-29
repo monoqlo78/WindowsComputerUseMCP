@@ -1,0 +1,20 @@
+{
+  "browser": {
+    "launchOptions": {
+      "args": [
+        "--window-position=0,0",
+        "--window-size=1920,1080",
+        "--disable-gpu",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--hide-crash-restore-bubble"
+      ]
+    },
+    "contextOptions": {
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      }
+    }
+  }
+}

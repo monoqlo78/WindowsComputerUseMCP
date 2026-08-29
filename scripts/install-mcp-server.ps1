@@ -15,6 +15,9 @@
       3. インストール先へ反映する（既定: %LOCALAPPDATA%\WindowsComputerUseMCP\current）
       4. 配置されたサーバーが MCP ハンドシェイクに応答するか検証する
 
+    あわせて wcu-desktop-launcher（他の MCP サーバーをバックグラウンド
+    デスクトップ上で起動するためのラッパー）も配置します。
+
     MCP クライアントを再起動すると、新しいツールが利用可能になります。
 
 .PARAMETER InstallRoot
@@ -25,6 +28,13 @@
 
 .PARAMETER SkipVerify
     配置後の起動検証を省略します。
+
+.PARAMETER UpdateClientConfig
+    GitHub Copilot CLI の mcp-config.json を自動更新します。
+
+.PARAMETER SkipPlaywright
+    -UpdateClientConfig 時に playwright-bg（バックグラウンドのブラウザ操作）を
+    登録しません。
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File scripts\install-mcp-server.ps1
@@ -38,16 +48,22 @@ param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Release',
     [switch]$SkipVerify,
-    [switch]$UpdateClientConfig
+    [switch]$UpdateClientConfig,
+    [switch]$SkipPlaywright
 )
 
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $serverProject = Join-Path $repoRoot 'src\WindowsComputerUseMCP.Server\WindowsComputerUseMCP.Server.csproj'
+$launcherProject = Join-Path $repoRoot 'src\WindowsComputerUseMCP.DesktopLauncher\WindowsComputerUseMCP.DesktopLauncher.csproj'
+$playwrightConfigSource = Join-Path $repoRoot 'config\playwright-mcp-background.config.json'
 $installDir = Join-Path $InstallRoot 'current'
+$launcherDir = Join-Path $installDir 'launcher'
 $stagingDir = Join-Path $InstallRoot 'staging'
+$launcherStagingDir = Join-Path $InstallRoot 'staging-launcher'
 $exeName = 'WindowsComputerUseMCP.Server.exe'
+$launcherExeName = 'wcu-desktop-launcher.exe'
 
 if (-not (Test-Path $serverProject)) {
     throw "サーバープロジェクトが見つかりません: $serverProject"
@@ -84,6 +100,9 @@ else {
 if (Test-Path $stagingDir) {
     Remove-Item -Recurse -Force $stagingDir
 }
+if (Test-Path $launcherStagingDir) {
+    Remove-Item -Recurse -Force $launcherStagingDir
+}
 
 Write-Host ''
 Write-Host 'publish を実行しています...' -ForegroundColor Cyan
@@ -95,6 +114,16 @@ if ($LASTEXITCODE -ne 0) {
 $stagedExe = Join-Path $stagingDir $exeName
 if (-not (Test-Path $stagedExe)) {
     throw "publish 後に実行ファイルが見つかりません: $stagedExe"
+}
+
+# デスクトップランチャーは別アセンブリなので独立した出力先へ publish する。
+if (Test-Path $launcherProject) {
+    Write-Host ''
+    Write-Host 'デスクトップランチャーを publish しています...' -ForegroundColor Cyan
+    & dotnet publish $launcherProject -c $Configuration -o $launcherStagingDir --nologo
+    if ($LASTEXITCODE -ne 0) {
+        throw "ランチャーの publish に失敗しました (終了コード $LASTEXITCODE)"
+    }
 }
 
 # --- 3. インストール先へ反映 ---------------------------------------------------
@@ -113,11 +142,28 @@ New-Item -ItemType Directory -Path $installDir -Force | Out-Null
 Copy-Item -Path (Join-Path $stagingDir '*') -Destination $installDir -Recurse -Force
 Remove-Item -Recurse -Force $stagingDir
 
+# ランチャーとブラウザ用設定を配置する。
+$installedLauncher = $null
+if (Test-Path $launcherStagingDir) {
+    New-Item -ItemType Directory -Path $launcherDir -Force | Out-Null
+    Copy-Item -Path (Join-Path $launcherStagingDir '*') -Destination $launcherDir -Recurse -Force
+    Remove-Item -Recurse -Force $launcherStagingDir
+    $installedLauncher = Join-Path $launcherDir $launcherExeName
+}
+
+$installedPlaywrightConfig = Join-Path $installDir 'playwright-mcp-background.config.json'
+if (Test-Path $playwrightConfigSource) {
+    Copy-Item $playwrightConfigSource $installedPlaywrightConfig -Force
+}
+
 $installedExe = Join-Path $installDir $exeName
 $version = (Get-Item $installedExe).VersionInfo.FileVersion
 Write-Host ''
 Write-Host "配置しました: $installedExe" -ForegroundColor Green
 Write-Host "バージョン  : $version"
+if ($installedLauncher) {
+    Write-Host "ランチャー  : $installedLauncher"
+}
 
 # --- 4. 起動検証 --------------------------------------------------------------
 if (-not $SkipVerify) {
@@ -222,8 +268,60 @@ if ($UpdateClientConfig) {
         Write-Host "  新規登録: $installedExe"
     }
 
-    $json | ConvertTo-Json -Depth 32 | Set-Content -Path $copilotConfig -Encoding UTF8
+    # PowerShell 5.1 の Set-Content -Encoding UTF8 は BOM を付けてしまう。
+    # BOM 付き JSON を拒否するパーサーがあるため BOM なしで書き出す。
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($copilotConfig, ($json | ConvertTo-Json -Depth 32), $utf8NoBom)
     Write-Host "設定を更新しました（バックアップ: $backup）" -ForegroundColor Green
+}
+
+# --- 6. バックグラウンドブラウザ (playwright-bg) の登録 ------------------------
+# Playwright MCP の node プロセス自体を隠しデスクトップ上で起動すると、
+# そこから spawn されるブラウザも同じデスクトップを継承する。
+# これによりヘッドありブラウザの忠実性を保ったままフォアグラウンドを奪わない。
+if ($UpdateClientConfig -and -not $SkipPlaywright) {
+    Write-Host ''
+    Write-Host 'playwright-bg（バックグラウンドのブラウザ操作）を登録しています...' -ForegroundColor Cyan
+
+    if (-not $installedLauncher -or -not (Test-Path $installedLauncher)) {
+        Write-Warning 'ランチャーが配置されていないため playwright-bg の登録を省略します。'
+    }
+    elseif (-not (Test-Path $installedPlaywrightConfig)) {
+        Write-Warning "ブラウザ用設定が見つからないため登録を省略します: $installedPlaywrightConfig"
+    }
+    else {
+        $json = Get-Content $copilotConfig -Raw -Encoding UTF8 | ConvertFrom-Json
+
+        # npx は .cmd なので cmd.exe 経由で起動する必要がある。
+        $playwrightArgs = @(
+            '--desktop', 'WCU_Background',
+            '--',
+            'cmd.exe', '/c', 'npx', '-y', '@playwright/mcp@latest',
+            '--browser', 'msedge',
+            '--config', $installedPlaywrightConfig
+        )
+
+        $entry = [pscustomobject]@{
+            type    = 'local'
+            command = $installedLauncher
+            args    = $playwrightArgs
+            tools   = @('*')
+        }
+
+        if ($json.mcpServers.PSObject.Properties.Name -contains 'playwright-bg') {
+            $json.mcpServers.'playwright-bg' = $entry
+            Write-Host '  既存の playwright-bg を更新しました。'
+        }
+        else {
+            $json.mcpServers | Add-Member -NotePropertyName 'playwright-bg' -NotePropertyValue $entry
+            Write-Host '  playwright-bg を新規登録しました。'
+        }
+
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText($copilotConfig, ($json | ConvertTo-Json -Depth 32), $utf8NoBom)
+        Write-Host "  デスクトップ: WCU_Background"
+        Write-Host '登録しました。ブラウザは隠しデスクトップ上で動作します。' -ForegroundColor Green
+    }
 }
 
 # --- 案内 ---------------------------------------------------------------------
