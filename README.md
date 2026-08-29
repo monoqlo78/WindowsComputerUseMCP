@@ -46,32 +46,66 @@ dotnet build
 dotnet test
 ```
 
-## MCP クライアントへの登録方法（VS Code / GitHub Copilot）
+## MCP クライアントへの登録方法（GitHub Copilot / VS Code）
 
-ビルド後、`src\WindowsComputerUseMCP.Server\bin\Debug\net10.0-windows\WindowsComputerUseMCP.Server.exe` が
-stdio ベースの MCP サーバーとして起動できます。
+### インストールスクリプトを使う（推奨）
 
-### ワークスペース単位で登録する場合
+```powershell
+# ビルド → %LOCALAPPDATA% へ配置 → 起動検証まで一括で実行
+.\scripts\install-mcp-server.ps1
 
-プロジェクト直下（または任意のワークスペース）に `.vscode/mcp.json` を作成します。
+# GitHub Copilot CLI の設定ファイルも自動で書き換える場合
+.\scripts\install-mcp-server.ps1 -UpdateClientConfig
+```
+
+スクリプトは次の処理を行います。
+
+1. 実行中の `WindowsComputerUseMCP.Server` プロセスを停止する
+2. `dotnet publish -c Release` を実行して `%LOCALAPPDATA%\WindowsComputerUseMCP\staging` に出力する
+3. `%LOCALAPPDATA%\WindowsComputerUseMCP\current` へ差し替える
+4. MCP ハンドシェイク（`initialize` → `tools/list`）を実行し、ツールが公開されているか検証する
+5. `-UpdateClientConfig` 指定時は `%USERPROFILE%\.copilot\mcp-config.json` の `command` を更新する
+   （変更前の内容はタイムスタンプ付き `.bak` として保存されます）
+
+配置先の実行ファイルは次のパスになります。
+
+```
+%LOCALAPPDATA%\WindowsComputerUseMCP\current\WindowsComputerUseMCP.Server.exe
+```
+
+> **なぜ `bin\Debug` を直接登録してはいけないのか**
+> MCP クライアントが起動したサーバープロセスは `bin` 配下の DLL をロックし続けます。
+> その状態では `dotnet build` が失敗するため、ソースを更新してもクライアントは
+> **古いバイナリを掴んだまま**になり、新しく追加したツールが一切現れません。
+> publish 済みの独立したディレクトリを登録することで、この問題を回避できます。
+
+### 更新するとき
+
+```powershell
+git pull
+.\scripts\install-mcp-server.ps1 -UpdateClientConfig
+```
+
+実行後、**MCP クライアント（GitHub Copilot CLI / VS Code）を再起動**してください。
+再起動するまで新しいツールは読み込まれません。
+
+### VS Code に手動で登録する場合
+
+ワークスペース単位なら `.vscode/mcp.json`、全体に適用するならコマンドパレットの
+**MCP: Open User Configuration** から以下を追加します。
 
 ```json
 {
   "servers": {
     "windows-computer-use": {
       "type": "stdio",
-      "command": "C:\\path\\to\\WindowsComputerUseMCP\\src\\WindowsComputerUseMCP.Server\\bin\\Debug\\net10.0-windows\\WindowsComputerUseMCP.Server.exe"
+      "command": "C:\\Users\\<ユーザー名>\\AppData\\Local\\WindowsComputerUseMCP\\current\\WindowsComputerUseMCP.Server.exe"
     }
   }
 }
 ```
 
-### ユーザープロファイル単位で登録する場合
-
-コマンドパレットから **MCP: Open User Configuration** を実行し、同様の `servers` エントリを追加します。
-全ワークスペースで共通のサーバーを使いたい場合はこちらを利用してください。
-
-登録後、VS Code の Chat ビューでツールの利用を許可すると、`window_list` や `screen_capture` などの
+登録後、Chat ビューでツールの利用を許可すると、`window_list` や `screen_capture` などの
 ツールがエージェントから呼び出せるようになります。
 
 > **注意**: 本サーバーはローカルマシンのマウス・キーボード・画面を直接操作します。信頼できるプロンプト・
