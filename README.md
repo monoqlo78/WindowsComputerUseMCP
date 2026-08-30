@@ -422,6 +422,75 @@ dotnet build src\WindowsComputerUseMCP.ControlPanel
 ControlPanel の「監査ログ」テーブルからも最新の記録を確認できます。入力文字列は既定でマスクされ、
 文字数・ハッシュ値のみが記録されます（詳細は [SECURITY.md](SECURITY.md) を参照）。
 
+## 実運用で得られた知見（トラブルシューティング）
+
+実機での自動化検証で判明した、再現性のある落とし穴と対処法をまとめます。
+
+### DPI スケーリングと座標系
+
+本サーバーは `app.manifest` で **Per-Monitor V2 DPI Aware** を宣言しているため、
+`screen_capture` / `window_list` / `mouse_*` はすべて**物理ピクセル座標**で一貫しています
+（例: 150% スケーリング環境では論理 1664×1109 ではなく物理 2496×1664 を返します）。
+
+一方で、**MCP の外で自作した補助スクリプト（PowerShell / Python など）は既定で DPI 非対応**です。
+そのまま `GetSystemMetrics` や `mouse_event(MOUSEEVENTF_ABSOLUTE)` を使うと論理座標で正規化され、
+カーソルが**スケール倍率のぶんだけズレた位置**に飛びます。補助スクリプト側では必ず冒頭で
+DPI 対応を宣言してください。
+
+```powershell
+# 座標を扱う前に必ず呼ぶ（これが無いと 150% 環境で約1.5倍ズレる）
+[void][YourInterop]::SetProcessDPIAware()
+```
+
+クリック後は `GetCursorPos` で「狙った座標にカーソルが到達したか」を検証すると、
+座標計算の誤りとクリック対象の誤りを切り分けられます。
+
+### 確実にフォアグラウンドを奪う方法
+
+`SetForegroundWindow` の単体呼び出しは、Windows のフォアグラウンドロックによりほぼ失敗します。
+`AttachThreadInput` で「自スレッド」「現在の前面ウィンドウのスレッド」「対象ウィンドウのスレッド」を
+一時的に結合してから呼ぶと、確実に成功します。
+
+```
+AttachThreadInput(myTid, foregroundTid, true)
+AttachThreadInput(myTid, targetTid,     true)
+BringWindowToTop(hwnd); SetForegroundWindow(hwnd)
+AttachThreadInput(myTid, targetTid,     false)
+AttachThreadInput(myTid, foregroundTid, false)
+```
+
+`SetWindowPos(HWND_TOPMOST)` による最前面固定は、相手も topmost の場合（Tauri / Electron 製アプリなど）に
+競合して安定しないため推奨しません。
+
+### ブラウザ（Chrome 系）を操作する場合の制約
+
+- **モダンな Chrome は windowless レンダラ**のため、`EnumChildWindows` で子ウィンドウが 0 件になり、
+  `Chrome_RenderWidgetHostHWND` も存在しません。結果として **`ui_get_tree` / `ui_find` では
+  Web コンテンツ（DOM）を一切取得できません**（ブラウザ自体の UI しか返りません）。
+  Web ページの操作は **`screen_capture`＋座標クリック**か、Playwright 等の専用ツールを使ってください。
+- **`screen_capture(windowHandle=...)` は Chrome では古いフレームを返すこと**があります
+  （GPU コンポジット由来。特にウィンドウのサイズ変更直後）。
+  Chrome が前面にある場合は **`screen_capture(monitorIndex=0)` を使う**のが確実です。
+- **`chrome.exe --new-window <URL>` は既存インスタンスに合流**するため、
+  ログイン済みセッションのままページを開けます。キーボード入力を伴わないぶん誤操作リスクがありません。
+- 実行中の Chrome プロファイル（`Default\Network\Cookies` 等）は排他ロックされており、
+  コピーによる「ログイン状態を引き継いだ別プロファイルでのバックグラウンド起動」はできません。
+  ブラウザをバックグラウンド化したい場合は
+  [`wcu-desktop-launcher`](#5-wcu-desktop-launcher--他のmcpサーバーごとバックグラウンドへ追い出す) を使ってください。
+
+### ユーザーと画面を取り合わない
+
+フォアグラウンド操作は、ユーザーが PC を使用している最中に実行すると相互に前面を奪い合って失敗します。
+`GetLastInputInfo` でアイドル時間を確認し、**一定時間（例: 40 秒）操作がないことを確認してから**
+一連の操作を**1本のスクリプトで一気に**実行すると成功率が大きく上がります
+（ツール呼び出しを細かく往復すると、その隙間にユーザー操作が割り込みます）。
+
+### 日本語を含む PowerShell スクリプト
+
+Windows PowerShell 5.1 は **BOM なし UTF-8 を cp932 として読む**ため、日本語を含む `.ps1` は文字化けします。
+判定用の文字列（ウィンドウタイトル等）は **ASCII のみ**にする（例: ダイアログはタイトルではなく
+ウィンドウクラス `#32770` で判定する）か、**UTF-8 BOM 付きで保存**してください。
+
 ## 現在のステータス
 
 フェーズ1〜7が完了しています（[ROADMAP.md](ROADMAP.md) 参照）。基本ツール群・入力操作・画面差分検出・
@@ -454,8 +523,9 @@ Illustrator / After Effects の実操作精度向上、DaVinci Resolve・CapCut�
 > **GitHub 上のリポジトリアイコンについて**
 > GitHub にはリポジトリ固有のアイコン設定がなく、リポジトリ名の左に表示される丸いアイコンは
 > **オーナー（ユーザー / Organization）のアバター**です。したがって `assets/` に画像を push しても変わりません。
-> 変更するには <https://github.com/settings/profile> で `assets/avatar-460.png` を手動アップロードしてください
-> （アバターの設定は GitHub API では行えません）。
+> 変更するには <https://github.com/settings/profile> で `assets/avatar-460.png` をアップロードします
+> （アバターの設定は GitHub API では行えず、Web UI 操作が必須です）。
+> 本リポジトリのオーナーアバターは `assets/avatar-460.png` を適用済みです。
 > リポジトリの OGP 画像は Settings → Social preview から `assets/banner.png` を設定できます。
 
 デザインの意図は、**ウィンドウ枠 ＝ Windows アプリ**、**回路で描かれたカーソル ＝ AI エージェントによる操作**です。
