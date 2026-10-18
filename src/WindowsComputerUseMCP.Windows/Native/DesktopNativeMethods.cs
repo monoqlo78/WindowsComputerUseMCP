@@ -32,6 +32,22 @@ internal static class DesktopNativeMethods
         DESKTOP_SWITCHDESKTOP;
 
     public const int UOI_NAME = 2;
+    public const int WH_KEYBOARD_LL = 13;
+    public const int HC_ACTION = 0;
+    public const uint WM_SYSKEYDOWN = 0x0104;
+    public const uint WM_SYSKEYUP = 0x0105;
+    public const uint WM_TIMER = 0x0113;
+    public const uint WM_RECOVERY_TRIGGER = 0x8001;
+    public const uint PM_NOREMOVE = 0x0000;
+    public const uint VK_ESCAPE = 0x1B;
+    public const uint VK_HOME = 0x24;
+    public const uint VK_SHIFT = 0x10;
+    public const uint VK_CONTROL = 0x11;
+    public const uint VK_LWIN = 0x5B;
+    public const uint VK_RWIN = 0x5C;
+    public const uint STILL_ACTIVE = 259;
+    public const uint CREATE_NO_WINDOW = 0x08000000;
+    public const ushort SW_HIDE = 0;
 
     public const uint CREATE_NEW_CONSOLE = 0x00000010;
     public const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
@@ -98,6 +114,54 @@ internal static class DesktopNativeMethods
         ref STARTUPINFO lpStartupInfo,
         out PROCESS_INFORMATION lpProcessInformation);
 
+    public delegate nint LowLevelKeyboardProc(int nCode, nint wParam, nint lParam);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KBDLLHOOKSTRUCT
+    {
+        public uint vkCode;
+        public uint scanCode;
+        public uint flags;
+        public uint time;
+        public nuint dwExtraInfo;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern nint SetWindowsHookExW(int idHook, LowLevelKeyboardProc callback, nint hMod, uint threadId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool UnhookWindowsHookEx(nint hook);
+
+    [DllImport("user32.dll")]
+    public static extern nint CallNextHookEx(nint hook, int nCode, nint wParam, nint lParam);
+
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern int GetMessageW(out NativeMethods.MSG message, nint hWnd, uint min, uint max);
+
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern bool PeekMessageW(out NativeMethods.MSG message, nint hWnd, uint min, uint max, uint remove);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern nuint SetTimer(nint hWnd, nuint idEvent, uint elapse, nint timerProc);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool KillTimer(nint hWnd, nuint idEvent);
+
+    [DllImport("user32.dll")]
+    public static extern short GetAsyncKeyState(int virtualKey);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern nint GetModuleHandleW(string? moduleName);
+
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool GetExitCodeProcess(nint process, out uint exitCode);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool TerminateProcess(nint process, uint exitCode);
+
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool CloseHandle(nint hObject);
 
@@ -161,8 +225,6 @@ internal static class DesktopNativeMethods
     public const uint WM_KEYDOWN = 0x0100;
     public const uint WM_KEYUP = 0x0101;
     public const uint WM_CHAR = 0x0102;
-    public const uint WM_SYSKEYDOWN = 0x0104;
-    public const uint WM_SYSKEYUP = 0x0105;
 
     public const nint MK_LBUTTON = 0x0001;
     public const nint MK_RBUTTON = 0x0002;

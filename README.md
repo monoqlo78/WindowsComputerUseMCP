@@ -186,8 +186,34 @@ Win32 の `CreateDesktopW` で**画面に表示されないデスクトップオ
 | `background_desktop_click` | 隠しデスクトップ上でクリック |
 | `background_desktop_type_text` | 隠しデスクトップ上でテキスト入力 |
 | `background_desktop_send_keys` | 隠しデスクトップ上でキー送信 |
-| `background_desktop_switch` | 一時的に隠しデスクトップを画面に表示（確認用。既定で自動復帰） |
+| `background_desktop_switch` | Win32デスクトップを一時表示。監視プロセス、物理キー、時間制限で復帰 |
+| `background_desktop_recover` | 直前の切り替え元（または Default）へ即時復帰 |
 | `background_desktop_close` | 隠しデスクトップと起動したプロセスを終了 |
+
+#### デスクトップ切替後の復旧
+
+`background_desktop_switch` は画面を切り替える前に、MCPサーバーとは独立した短時間の
+復旧監視プロセスを、表示先のWin32デスクトップ上で起動します。監視プロセスがキー入力を
+受け取れる状態になったことを確認できなければ、画面を切り替えません。表示中は物理キーで
+切り替え元への復帰を試みられます。
+
+- **Esc** または **Home** を押して離すと復帰を試みます。監視が有効な間、この2つのキーイベントは
+  復帰用に捕捉されます。
+- **Windowsキー単独**を押して離すと復帰を試みます。Windowsキーを修飾キーとして他のキーと
+  組み合わせた場合は通常どおり通過します。
+- `autoReturnSeconds` 秒後にも自動復帰を試みます。指定可能範囲は **1〜120秒**です。
+  監視プロセスの起動・表示先の確認までは同期的に検証しますが、Windowsのロック画面や
+  認証用secure desktopで復帰が拒否される場合があり、後続の復帰成功までは保証しません。
+- MCPが利用可能な場合は `background_desktop_recover` を呼び出せます。既定では直前の切り替え元へ
+  戻り、サーバー側に記録が無い場合は `Default` を対象にします。成功を返す前に入力デスクトップ名を確認します。
+
+この機能が扱うのは、同一ログオンセッション/ウィンドウステーション上でアクセス権のある
+**Win32デスクトップオブジェクト**です。通常ウィンドウを前面化する機能やWindowsの
+**仮想デスクトップ**とは別物です。別プロセスが作成したWin32デスクトップも、同じ
+`WinSta0` 内で現在のユーザーに必要なアクセス権があれば対象にできますが、他ユーザー/別セッションの
+デスクトップには対応しません。UACの同意画面、サインイン/ロック画面などの認証用secure desktopを
+操作・回避するものではなく、そこで拒否された場合は復旧失敗として扱います。監視プロセスは
+インストール/常駐せず、切替前の自動復帰期限後に終了します。
 
 使用例（AIエージェントからの呼び出しイメージ）:
 
@@ -204,11 +230,18 @@ Win32 の `CreateDesktopW` で**画面に表示されないデスクトップオ
 { "tool": "background_desktop_capture",
   "args": { "desktopName": "work1", "windowHandle": 7020710 } }
 
-// 4. 「手を動かす」
+// 4. 表示確認する。Esc/Home/単独Windowsキーでも戻れる
+{ "tool": "background_desktop_switch",
+  "args": { "desktopName": "work1", "autoReturnSeconds": 15 } }
+
+// 5. MCPが利用できる状態なら明示的にも復帰
+{ "tool": "background_desktop_recover", "args": {} }
+
+// 6. 「手を動かす」
 { "tool": "background_desktop_type_text",
   "args": { "desktopName": "work1", "windowHandle": 7020710, "text": "Hello" } }
 
-// 5. 後片付け
+// 7. 後片付け
 { "tool": "background_desktop_close", "args": { "desktopName": "work1" } }
 ```
 

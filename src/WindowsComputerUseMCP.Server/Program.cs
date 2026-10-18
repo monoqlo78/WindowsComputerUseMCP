@@ -22,6 +22,12 @@ using WindowsComputerUseMCP.Skills.Figma;
 using WindowsComputerUseMCP.Skills.Generic;
 using WindowsComputerUseMCP.Skills.Illustrator;
 
+if (DesktopRecoveryAgent.TryRun(args, out var recoveryExitCode))
+{
+    Environment.ExitCode = recoveryExitCode;
+    return;
+}
+
 var builder = Host.CreateApplicationBuilder(args);
 
 // ユーザー固有設定（%LOCALAPPDATA%\WindowsComputerUseMCP\usersettings.json）があれば

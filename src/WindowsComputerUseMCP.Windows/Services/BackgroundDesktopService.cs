@@ -2,6 +2,8 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using WindowsComputerUseMCP.Core.Abstractions;
@@ -28,10 +30,13 @@ public sealed class BackgroundDesktopService : IBackgroundDesktopService, IDispo
 {
     private const int InlineImageMaxBytes = 4 * 1024 * 1024;
     private const int MoveStepIntervalMs = 10;
+    private const int RecoveryAgentReadyTimeoutMs = 5000;
 
     private static readonly Regex NamePattern = new("^[A-Za-z0-9_-]{1,64}$", RegexOptions.Compiled);
 
     private readonly ConcurrentDictionary<string, DesktopContext> _desktops = new(StringComparer.OrdinalIgnoreCase);
+    private readonly SemaphoreSlim _switchLock = new(1, 1);
+    private string? _lastRecoveryDesktopName;
     private bool _disposed;
 
     public Task<BackgroundDesktopInfo> CreateAsync(BackgroundDesktopCreateRequest request, CancellationToken cancellationToken = default)
@@ -381,82 +386,346 @@ public sealed class BackgroundDesktopService : IBackgroundDesktopService, IDispo
         }, cancellationToken);
     }
 
-    public Task<BackgroundDesktopActionResult> SwitchAsync(BackgroundDesktopSwitchRequest request, CancellationToken cancellationToken = default)
+    public async Task<BackgroundDesktopActionResult> SwitchAsync(BackgroundDesktopSwitchRequest request, CancellationToken cancellationToken = default)
     {
         var targetName = string.IsNullOrWhiteSpace(request.DesktopName) ? "Default" : request.DesktopName.Trim();
-
-        var previous = DesktopNativeMethods.OpenInputDesktop(0, false, DesktopNativeMethods.DESKTOP_SWITCHDESKTOP);
-
-        nint target;
-        var ownsTarget = false;
-        if (_desktops.TryGetValue(targetName, out var managed))
+        if (request.AutoReturnSeconds is < 1 or > DesktopRecoveryAgent.MaxRecoverySeconds)
         {
-            target = managed.Handle;
-        }
-        else
-        {
-            target = DesktopNativeMethods.OpenDesktopW(targetName, 0, false, DesktopNativeMethods.DESKTOP_SWITCHDESKTOP);
-            ownsTarget = true;
-        }
-
-        if (target == nint.Zero)
-        {
-            if (previous != nint.Zero)
-            {
-                DesktopNativeMethods.CloseDesktop(previous);
-            }
-
-            return Task.FromResult(new BackgroundDesktopActionResult
+            return new BackgroundDesktopActionResult
             {
                 Executed = false,
                 DesktopName = targetName,
-                Reason = $"デスクトップ '{targetName}' を開けませんでした。",
-            });
+                Reason = $"autoReturnSeconds は1〜{DesktopRecoveryAgent.MaxRecoverySeconds}の範囲で指定してください。",
+            };
         }
 
-        var switched = DesktopNativeMethods.SwitchDesktop(target);
-
-        if (switched && request.AutoReturnSeconds > 0 && previous != nint.Zero)
+        await _switchLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        nint previous = nint.Zero;
+        nint target = nint.Zero;
+        var ownsTarget = false;
+        nint recoveryProcess = nint.Zero;
+        var terminateAgentOnCleanup = true;
+        try
         {
-            var seconds = request.AutoReturnSeconds;
-            _ = Task.Run(async () =>
+            if (!NamePattern.IsMatch(targetName))
             {
-                try
+                return FailedSwitch(targetName, "デスクトップ名は英数字・ハイフン・アンダースコアのみ指定できます。");
+            }
+
+            previous = DesktopNativeMethods.OpenInputDesktop(
+                0, false, DesktopNativeMethods.DESKTOP_READOBJECTS | DesktopNativeMethods.DESKTOP_SWITCHDESKTOP);
+            if (previous == nint.Zero)
+            {
+                return FailedSwitch(targetName, "現在の入力デスクトップを開けません。Windowsのロック画面や認証用secure desktopでは切り替えできません。");
+            }
+
+            var previousName = DesktopNativeMethods.GetDesktopName(previous);
+            if (string.IsNullOrWhiteSpace(previousName))
+            {
+                return FailedSwitch(targetName, "現在のデスクトップ名を取得できず、安全な復帰先を確保できませんでした。");
+            }
+
+            if (_desktops.TryGetValue(targetName, out var managed))
+            {
+                target = managed.Handle;
+            }
+            else
+            {
+                target = DesktopNativeMethods.OpenDesktopW(targetName, 0, false, DesktopNativeMethods.DESKTOP_SWITCHDESKTOP);
+                ownsTarget = true;
+            }
+
+            if (target == nint.Zero)
+            {
+                return FailedSwitch(targetName, $"デスクトップ '{targetName}' を開けませんでした（Win32 error {Marshal.GetLastWin32Error()}）。");
+            }
+
+            if (string.Equals(previousName, targetName, StringComparison.OrdinalIgnoreCase))
+            {
+                return new BackgroundDesktopActionResult
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(seconds)).ConfigureAwait(false);
-                    DesktopNativeMethods.SwitchDesktop(previous);
-                }
-                finally
-                {
-                    DesktopNativeMethods.CloseDesktop(previous);
-                    if (ownsTarget)
-                    {
-                        DesktopNativeMethods.CloseDesktop(target);
-                    }
-                }
-            }, CancellationToken.None);
+                    Executed = true,
+                    DesktopName = targetName,
+                    Reason = "指定したデスクトップは既に入力デスクトップです。",
+                };
+            }
+
+            recoveryProcess = StartRecoveryAgent(targetName, previousName, request.AutoReturnSeconds, cancellationToken, out var agentError);
+            if (recoveryProcess == nint.Zero)
+            {
+                return FailedSwitch(targetName, $"別プロセスの復旧監視を準備できなかったため、デスクトップは切り替えていません。{agentError}");
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            var switched = DesktopNativeMethods.SwitchDesktop(target);
+            if (!switched)
+            {
+                var error = Marshal.GetLastWin32Error();
+                DesktopNativeMethods.TerminateProcess(recoveryProcess, 1);
+                terminateAgentOnCleanup = false;
+                return FailedSwitch(targetName, $"SwitchDesktop に失敗しました（Win32 error {error}）。認証用secure desktopは対象外です。");
+            }
+
+            terminateAgentOnCleanup = false;
+            _lastRecoveryDesktopName = previousName;
+            if (!WaitForInputDesktop(targetName))
+            {
+                return FailedSwitch(targetName, "SwitchDesktop は成功を返しましたが、入力デスクトップを確認できません。復旧監視は引き続き有効です。");
+            }
+
+            return new BackgroundDesktopActionResult
+            {
+                Executed = true,
+                DesktopName = targetName,
+                Reason = $"復旧監視を別プロセスで起動しました。{request.AutoReturnSeconds}秒以内にEsc、Home、または単独のWindowsキーを押すと元のデスクトップへの復帰を試みます。secure desktopやWindowsのアクセス制限時は失敗することがあります。",
+            };
         }
-        else
+        finally
         {
+            if (recoveryProcess != nint.Zero)
+            {
+                if (terminateAgentOnCleanup)
+                {
+                    DesktopNativeMethods.TerminateProcess(recoveryProcess, 1);
+                }
+
+                DesktopNativeMethods.CloseHandle(recoveryProcess);
+            }
+
             if (previous != nint.Zero)
             {
                 DesktopNativeMethods.CloseDesktop(previous);
             }
 
-            if (ownsTarget)
+            if (ownsTarget && target != nint.Zero)
+            {
+                DesktopNativeMethods.CloseDesktop(target);
+            }
+
+            _switchLock.Release();
+        }
+    }
+
+    public async Task<BackgroundDesktopActionResult> RecoverAsync(string? desktopName = null, CancellationToken cancellationToken = default)
+    {
+        await _switchLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var targetName = string.IsNullOrWhiteSpace(desktopName)
+                ? _lastRecoveryDesktopName ?? "Default"
+                : desktopName.Trim();
+            if (!NamePattern.IsMatch(targetName))
+            {
+                return FailedSwitch(targetName, "復旧先デスクトップ名が不正です。");
+            }
+
+            var target = DesktopNativeMethods.OpenDesktopW(targetName, 0, false, DesktopNativeMethods.DESKTOP_SWITCHDESKTOP);
+            if (target == nint.Zero)
+            {
+                return FailedSwitch(targetName, $"復旧先デスクトップを開けません（Win32 error {Marshal.GetLastWin32Error()}）。");
+            }
+
+            try
+            {
+                if (!DesktopNativeMethods.SwitchDesktop(target))
+                {
+                    return FailedSwitch(targetName, $"SwitchDesktop に失敗しました（Win32 error {Marshal.GetLastWin32Error()}）。Windowsのロック画面や認証用secure desktopからの復帰はできません。");
+                }
+
+                if (!WaitForInputDesktop(targetName))
+                {
+                    return FailedSwitch(targetName, "復帰要求後に入力デスクトップを確認できませんでした。成功とは判定していません。");
+                }
+
+                _lastRecoveryDesktopName = null;
+                return new BackgroundDesktopActionResult { Executed = true, DesktopName = targetName };
+            }
+            finally
             {
                 DesktopNativeMethods.CloseDesktop(target);
             }
         }
-
-        return Task.FromResult(new BackgroundDesktopActionResult
+        finally
         {
-            Executed = switched,
-            DesktopName = targetName,
-            Reason = switched
-                ? request.AutoReturnSeconds > 0 ? $"{request.AutoReturnSeconds} 秒後に自動で元のデスクトップへ戻ります。" : null
-                : "SwitchDesktop に失敗しました（権限不足、またはセキュアデスクトップ表示中の可能性があります）。",
-        });
+            _switchLock.Release();
+        }
+    }
+
+    private static BackgroundDesktopActionResult FailedSwitch(string desktopName, string reason)
+        => new() { Executed = false, DesktopName = desktopName, Reason = reason };
+
+    private static bool IsInputDesktop(string expectedName)
+    {
+        var input = DesktopNativeMethods.OpenInputDesktop(0, false, DesktopNativeMethods.DESKTOP_READOBJECTS);
+        if (input == nint.Zero)
+        {
+            return false;
+        }
+
+        try
+        {
+            return string.Equals(DesktopNativeMethods.GetDesktopName(input), expectedName, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            DesktopNativeMethods.CloseDesktop(input);
+        }
+    }
+
+    private static bool WaitForInputDesktop(string expectedName)
+    {
+        var verificationTimer = Stopwatch.StartNew();
+        do
+        {
+            if (IsInputDesktop(expectedName))
+            {
+                return true;
+            }
+
+            Thread.Sleep(50);
+        }
+        while (verificationTimer.Elapsed < TimeSpan.FromSeconds(1));
+
+        return false;
+    }
+
+    private static nint StartRecoveryAgent(
+        string targetName,
+        string sourceName,
+        int timeoutSeconds,
+        CancellationToken cancellationToken,
+        out string error)
+    {
+        error = string.Empty;
+        var executablePath = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(executablePath))
+        {
+            error = "実行中のMCPプロセスのパスを取得できません。";
+            return nint.Zero;
+        }
+
+        var isDotnetHost = string.Equals(
+            Path.GetFileNameWithoutExtension(executablePath),
+            "dotnet",
+            StringComparison.OrdinalIgnoreCase);
+        var entryAssemblyPath = Assembly.GetEntryAssembly()?.Location;
+        if (isDotnetHost && string.IsNullOrWhiteSpace(entryAssemblyPath))
+        {
+            error = "dotnet実行時にMCPアセンブリのパスを取得できません。";
+            return nint.Zero;
+        }
+
+        var readyName = $@"Local\WcuRecoveryReady_{Guid.NewGuid():N}";
+        using var ready = new EventWaitHandle(false, EventResetMode.ManualReset, readyName);
+        var arguments = new List<string>();
+        if (isDotnetHost)
+        {
+            arguments.Add(entryAssemblyPath!);
+        }
+
+        arguments.Add("--wcu-desktop-recovery-agent");
+        arguments.Add(sourceName);
+        arguments.Add(readyName);
+        arguments.Add(timeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+        var commandLine = new StringBuilder(QuoteWindowsArgument(executablePath));
+        foreach (var argument in arguments)
+        {
+            commandLine.Append(' ').Append(QuoteWindowsArgument(argument));
+        }
+
+        var startupInfo = new DesktopNativeMethods.STARTUPINFO
+        {
+            cb = Marshal.SizeOf<DesktopNativeMethods.STARTUPINFO>(),
+            lpDesktop = $@"WinSta0\{targetName}",
+            dwFlags = DesktopNativeMethods.STARTF_USESHOWWINDOW,
+            wShowWindow = DesktopNativeMethods.SW_HIDE,
+        };
+        var created = DesktopNativeMethods.CreateProcessW(
+            executablePath,
+            commandLine,
+            nint.Zero,
+            nint.Zero,
+            false,
+            DesktopNativeMethods.CREATE_NO_WINDOW | DesktopNativeMethods.CREATE_UNICODE_ENVIRONMENT,
+            nint.Zero,
+            Path.GetDirectoryName(executablePath),
+            ref startupInfo,
+            out var processInfo);
+        if (!created)
+        {
+            error = $"復旧監視プロセスを起動できません（Win32 error {Marshal.GetLastWin32Error()}）。";
+            return nint.Zero;
+        }
+
+        DesktopNativeMethods.CloseHandle(processInfo.hThread);
+        var readySignal = false;
+        var readyTimer = Stopwatch.StartNew();
+        while (readyTimer.Elapsed < TimeSpan.FromMilliseconds(RecoveryAgentReadyTimeoutMs))
+        {
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+            catch (OperationCanceledException)
+            {
+                DesktopNativeMethods.TerminateProcess(processInfo.hProcess, 1);
+                DesktopNativeMethods.CloseHandle(processInfo.hProcess);
+                throw;
+            }
+
+            if (ready.WaitOne(100))
+            {
+                readySignal = true;
+                break;
+            }
+
+            if (!DesktopNativeMethods.GetExitCodeProcess(processInfo.hProcess, out var exitCode) ||
+                exitCode != DesktopNativeMethods.STILL_ACTIVE)
+            {
+                error = "復旧監視プロセスが準備完了前に終了しました。";
+                DesktopNativeMethods.TerminateProcess(processInfo.hProcess, 1);
+                DesktopNativeMethods.CloseHandle(processInfo.hProcess);
+                return nint.Zero;
+            }
+        }
+
+        if (!readySignal)
+        {
+            DesktopNativeMethods.TerminateProcess(processInfo.hProcess, 1);
+            DesktopNativeMethods.CloseHandle(processInfo.hProcess);
+            error = "復旧監視プロセスが5秒以内にキー監視を開始できませんでした。";
+            return nint.Zero;
+        }
+
+        return processInfo.hProcess;
+    }
+
+    private static string QuoteWindowsArgument(string argument)
+    {
+        var result = new StringBuilder("\"");
+        var backslashes = 0;
+        foreach (var character in argument)
+        {
+            if (character == '\\')
+            {
+                backslashes++;
+                continue;
+            }
+
+            if (character == '"')
+            {
+                result.Append('\\', (backslashes * 2) + 1).Append('"');
+                backslashes = 0;
+                continue;
+            }
+
+            result.Append('\\', backslashes).Append(character);
+            backslashes = 0;
+        }
+
+        result.Append('\\', backslashes * 2).Append('"');
+        return result.ToString();
     }
 
     public void Dispose()

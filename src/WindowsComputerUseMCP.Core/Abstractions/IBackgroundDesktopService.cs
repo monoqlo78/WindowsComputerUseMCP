@@ -35,6 +35,9 @@ public interface IBackgroundDesktopService
     /// <summary>バックグラウンドデスクトップ内でキー／ホットキーを送信する。</summary>
     Task<BackgroundDesktopActionResult> SendKeysAsync(BackgroundDesktopKeyRequest request, CancellationToken cancellationToken = default);
 
-    /// <summary>指定デスクトップを一時的に画面表示する（確認用。既定で自動的に元へ戻る）。</summary>
+    /// <summary>切替前に独立した復旧監視を起動してから指定デスクトップを一時表示する。</summary>
     Task<BackgroundDesktopActionResult> SwitchAsync(BackgroundDesktopSwitchRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>直前の切り替え元デスクトップ、または Default デスクトップへ即時復帰する。</summary>
+    Task<BackgroundDesktopActionResult> RecoverAsync(string? desktopName = null, CancellationToken cancellationToken = default);
 }

@@ -121,8 +121,8 @@ public sealed record BackgroundDesktopSwitchRequest
     public string? DesktopName { get; init; }
 
     /// <summary>
-    /// 自動で元のデスクトップへ戻るまでの秒数。0 を指定すると戻らない（危険）。既定は 15 秒。
-    /// バックグラウンドデスクトップには通常タスクバーが無いため、戻れなくなるのを防ぐ安全装置。
+    /// 自動で元のデスクトップへ戻るまでの秒数。1〜120秒。既定は15秒。
+    /// 対象デスクトップ内で独立した復旧監視プロセスも起動する。
     /// </summary>
     public int AutoReturnSeconds { get; init; } = 15;
 }

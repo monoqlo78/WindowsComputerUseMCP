@@ -259,14 +259,14 @@ public static class BackgroundDesktopTools
     }
 
     [McpServerTool(Name = "background_desktop_switch")]
-    [Description("指定したデスクトップを一時的に画面に表示して目視確認する。既定では autoReturnSeconds 秒後に自動で元のデスクトップへ戻る（バックグラウンドデスクトップにはタスクバーが無く戻れなくなるため）。desktopName を省略または \"Default\" にすると通常デスクトップへ戻る。")]
+    [Description("指定したWin32デスクトップを一時表示する。切り替え前に対象デスクトップ上で独立した復旧監視を起動し、Esc、Home、単独のWindowsキー、または上限120秒の自動復帰で元のWin32デスクトップへの復帰を試みる。認証用secure desktopには対応しない。desktopName を省略または \"Default\" にするとDefaultへ切り替える。")]
     public static Task<OperationResult<BackgroundDesktopActionResult>> Switch(
         IBackgroundDesktopService desktopService,
         ISafetyPolicyService safetyPolicy,
         IAuditLogService auditLog,
         ILogger<BackgroundDesktopActionResult> logger,
         [Description("表示するデスクトップ名。省略または \"Default\" で通常デスクトップへ戻る。")] string? desktopName = null,
-        [Description("自動で元のデスクトップへ戻るまでの秒数。0で戻らない（非推奨）。既定15。")] int autoReturnSeconds = 15,
+        [Description("自動復帰までの秒数（1〜120）。既定15。")] int autoReturnSeconds = 15,
         CancellationToken cancellationToken = default)
     {
         var request = new BackgroundDesktopSwitchRequest
@@ -287,6 +287,27 @@ public static class BackgroundDesktopTools
                 ["desktopName"] = desktopName,
                 ["autoReturnSeconds"] = autoReturnSeconds.ToString(),
             },
+            applyRateLimit: true);
+    }
+
+    [McpServerTool(Name = "background_desktop_recover")]
+    [Description("直前の background_desktop_switch の切り替え元へ即時復帰する。サーバーが切り替え元を保持していない場合は Default へ戻る。認証用secure desktopからの復帰には使用できない。")]
+    public static Task<OperationResult<BackgroundDesktopActionResult>> Recover(
+        IBackgroundDesktopService desktopService,
+        ISafetyPolicyService safetyPolicy,
+        IAuditLogService auditLog,
+        ILogger<BackgroundDesktopActionResult> logger,
+        [Description("復帰先のWin32デスクトップ名。省略すると直前の切り替え元、または Default。")] string? desktopName = null,
+        CancellationToken cancellationToken = default)
+    {
+        return ToolRunner.RunAsync(
+            "background_desktop_recover",
+            safetyPolicy,
+            auditLog,
+            logger,
+            new SafetyCheckRequest { ToolName = "background_desktop_recover" },
+            () => desktopService.RecoverAsync(desktopName, cancellationToken),
+            new Dictionary<string, string?> { ["desktopName"] = desktopName },
             applyRateLimit: true);
     }
 
