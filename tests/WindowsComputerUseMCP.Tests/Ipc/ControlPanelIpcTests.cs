@@ -41,8 +41,9 @@ public class ControlPanelIpcTests
         var first = new EmergencyStopService();
         var second = new EmergencyStopService();
         first.Activate("initial");
-        using var server1 = CreateServer(first, prefix + "1");
-        using var server2 = CreateServer(second, prefix + "2");
+        var logger = new RecordingLogger();
+        using var server1 = new ControlPanelIpcServer(first, logger, prefix + "1");
+        using var server2 = new ControlPanelIpcServer(second, logger, prefix + "2");
         await server1.StartAsync(default);
         await server2.StartAsync(default);
         try
@@ -55,15 +56,21 @@ public class ControlPanelIpcTests
             Assert.True(mixed.EmergencyStopActive);
             Assert.False(second.IsActive);
 
-            Assert.True((await client.SendAsync(IpcCommand.Activate, "test"))!.Success);
-            Assert.True(first.IsActive);
-            Assert.True(second.IsActive);
+            for (var i = 0; i < 30; i++)
+            {
+                var activated = await client.SendAsync(IpcCommand.Activate, "test");
+                Assert.True(activated is not null && activated.Success, string.Join("\n", logger.Messages));
+                Assert.StartsWith("2 ", activated.Message);
+                Assert.True(first.IsActive);
+                Assert.True(second.IsActive);
 
-            var resumed = await client.SendAsync(IpcCommand.Deactivate);
-            Assert.True(resumed!.Success);
-            Assert.False(resumed.EmergencyStopActive);
-            Assert.False(first.IsActive);
-            Assert.False(second.IsActive);
+                var resumed = await client.SendAsync(IpcCommand.Deactivate);
+                Assert.True(resumed!.Success);
+                Assert.StartsWith("2 ", resumed.Message);
+                Assert.False(resumed.EmergencyStopActive);
+                Assert.False(first.IsActive);
+                Assert.False(second.IsActive);
+            }
         }
         finally
         {
@@ -163,6 +170,24 @@ public class ControlPanelIpcTests
     }
 
     [Fact]
+    public async Task DelayedReader_ReceivesResponseBeforeServerDisconnects()
+    {
+        var name = NewPrefix() + "delayed";
+        using var server = CreateServer(new EmergencyStopService(), name);
+        await server.StartAsync(default);
+        try
+        {
+            var response = await RequestLineAsync(name,
+                JsonSerializer.Serialize(new IpcRequest { Command = IpcCommand.Status }), 250);
+            Assert.True(response.Success);
+        }
+        finally
+        {
+            await server.StopAsync(default);
+        }
+    }
+
+    [Fact]
     public async Task StopAsync_CancelsConnectionWaitPromptly()
     {
         using var server = CreateServer(new EmergencyStopService(), NewPrefix() + "cancel");
@@ -177,7 +202,7 @@ public class ControlPanelIpcTests
     private static async Task<IpcResponse> RequestAsync(string name, IpcRequest request) =>
         await RequestLineAsync(name, JsonSerializer.Serialize(request));
 
-    private static async Task<IpcResponse> RequestLineAsync(string name, string line)
+    private static async Task<IpcResponse> RequestLineAsync(string name, string line, int responseReadDelayMs = 0)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await using var pipe = new NamedPipeClientStream(".", name, PipeDirection.InOut, PipeOptions.Asynchronous);
@@ -185,6 +210,10 @@ public class ControlPanelIpcTests
         using var reader = new StreamReader(pipe, leaveOpen: true);
         await using var writer = new StreamWriter(pipe, leaveOpen: true) { AutoFlush = true };
         await writer.WriteLineAsync(line.AsMemory(), timeout.Token);
+        if (responseReadDelayMs > 0)
+        {
+            await Task.Delay(responseReadDelayMs, timeout.Token);
+        }
         return JsonSerializer.Deserialize<IpcResponse>((await reader.ReadLineAsync(timeout.Token))!)!;
     }
 
@@ -200,9 +229,14 @@ public class ControlPanelIpcTests
     private sealed class RecordingLogger : ILogger<ControlPanelIpcServer>
     {
         public ConcurrentQueue<LogLevel> Levels { get; } = new();
+        public ConcurrentQueue<string> Messages { get; } = new();
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
         public bool IsEnabled(LogLevel logLevel) => true;
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
-            Exception? exception, Func<TState, Exception?, string> formatter) => Levels.Enqueue(logLevel);
+            Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            Levels.Enqueue(logLevel);
+            Messages.Enqueue($"{formatter(state, exception)} {exception}");
+        }
     }
 }

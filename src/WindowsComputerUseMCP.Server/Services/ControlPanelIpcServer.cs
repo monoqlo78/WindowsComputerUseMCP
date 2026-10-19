@@ -1,4 +1,5 @@
 using System.IO.Pipes;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -32,17 +33,25 @@ public sealed class ControlPanelIpcServer(
                     PipeTransmissionMode.Byte,
                     PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
 
-                await pipe.WaitForConnectionAsync(stoppingToken).ConfigureAwait(false);
-                using var requestCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-                requestCts.CancelAfter(IpcConstants.RequestTimeoutMs);
-                try
+                // パイプを要求間でも公開し続け、ControlPanel の検出から消える空白を作らない。
+                while (!stoppingToken.IsCancellationRequested)
                 {
-                    await HandleClientAsync(pipe, requestCts.Token).ConfigureAwait(false);
-                    consecutiveFailures = 0;
-                }
-                catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
-                {
-                    logger.LogDebug("ControlPanel IPC リクエストがタイムアウトしました。");
+                    await pipe.WaitForConnectionAsync(stoppingToken).ConfigureAwait(false);
+                    using var requestCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                    requestCts.CancelAfter(IpcConstants.RequestTimeoutMs);
+                    try
+                    {
+                        await HandleClientAsync(pipe, requestCts.Token).ConfigureAwait(false);
+                        consecutiveFailures = 0;
+                    }
+                    catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
+                    {
+                        logger.LogDebug("ControlPanel IPC リクエストがタイムアウトしました。");
+                    }
+                    finally
+                    {
+                        pipe.Disconnect();
+                    }
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -81,7 +90,6 @@ public sealed class ControlPanelIpcServer(
     private async Task HandleClientAsync(NamedPipeServerStream pipe, CancellationToken cancellationToken)
     {
         using var reader = new StreamReader(pipe, leaveOpen: true);
-        await using var writer = new StreamWriter(pipe, leaveOpen: true) { AutoFlush = true };
 
         var line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(line))
@@ -102,7 +110,9 @@ public sealed class ControlPanelIpcServer(
         }
 
         var json = JsonSerializer.Serialize(response);
-        await writer.WriteLineAsync(json.AsMemory(), cancellationToken).ConfigureAwait(false);
+        await pipe.WriteAsync(Encoding.UTF8.GetBytes(json + "\n"), cancellationToken).ConfigureAwait(false);
+        // DisconnectNamedPipe は未読データを破棄する。応答を読んだクライアントの切断を期限内で待つ。
+        await reader.ReadAsync(new char[1].AsMemory(), cancellationToken).ConfigureAwait(false);
     }
 
     private IpcResponse Handle(IpcRequest request)
