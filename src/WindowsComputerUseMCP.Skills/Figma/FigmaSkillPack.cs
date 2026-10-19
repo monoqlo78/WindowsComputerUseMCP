@@ -131,7 +131,9 @@ public sealed class FigmaSkillPack(FigmaBridgeServer bridge, ILogger<FigmaSkillP
                 "is_connected" => SkillActionOutcome.Ok(new { connected = bridge.IsPluginConnected },
                     bridge.IsPluginConnected
                         ? "Figma連携プラグインに接続できます。"
-                        : "Figma連携プラグインが接続されていません。tools/figma-plugin を開発用プラグインとしてFigmaで実行してください。"),
+                        : bridge.IsListening
+                            ? "Figma連携プラグインが接続されていません。tools/figma-plugin を開発用プラグインとしてFigmaで実行してください。"
+                            : "Figmaブリッジは待ち受けていません。WindowsComputerUseMcp:BackgroundServices:EnableFigmaBridge=true を指定して再起動してください。有効化済みならポート9877の競合を確認してください。"),
                 "document_info" => await ForwardAsync("get_document_info", null, cancellationToken).ConfigureAwait(false),
                 "get_selection" => await ForwardAsync("get_selection", null, cancellationToken).ConfigureAwait(false),
                 "create_rectangle" => await ForwardAsync("create_rectangle", BuildShapeParams(arguments), cancellationToken).ConfigureAwait(false),

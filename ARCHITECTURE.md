@@ -32,7 +32,7 @@ graph TD
     Server --> Safety
     Windows[WindowsComputerUseMCP.Windows<br/>Win32 / UI Automation / SendInput 実装] --> Core
     Safety[WindowsComputerUseMCP.Safety<br/>安全ポリシー・緊急停止・監査ログ判定] --> Core
-    ControlPanel[WindowsComputerUseMCP.ControlPanel<br/>WPF 監視/操作 UI] -.将来: 名前付きパイプ等で疎結合連携.-> Core
+    ControlPanel[WindowsComputerUseMCP.ControlPanel<br/>WPF 監視/操作 UI] -.プロセス別の名前付きパイプ.-> Server
     Tests[WindowsComputerUseMCP.Tests] --> Core
     Tests --> Safety
 ```
@@ -41,7 +41,7 @@ graph TD
 - **Windows**: Core のインターフェースを Win32 API / UI Automation / SendInput で実装する層。P/Invoke はここに閉じ込める。
 - **Safety**: 危険操作判定・許可リスト・連続操作回数制限・緊急停止状態を扱う層。Core のモデルのみに依存し、Windows 依存を持たない（テスト容易性のため）。
 - **Server**: MCP サーバー本体。Core/Windows/Safety を DI で組み立て、MCP ツールとして公開する。標準出力は MCP 通信専用。
-- **ControlPanel**: ローカル監視用 WPF アプリ。Server とは疎結合とし、将来的に名前付きパイプ等の IPC で連携できる構造にする（直接プロジェクト参照はしない）。
+- **ControlPanel**: ローカル監視用 WPF アプリ。Server とはプロセス別の名前付きパイプで連携する（直接プロジェクト参照はしない）。同一ユーザー・Windows セッションの検出済みサーバー全件にコマンドを送り、失敗や混在した停止状態を明示する。
 - **Tests**: xUnit によるユニットテスト。OS 状態に依存しすぎない Core/Safety のロジックを重点的にテストする。
 
 ## プロジェクト間参照

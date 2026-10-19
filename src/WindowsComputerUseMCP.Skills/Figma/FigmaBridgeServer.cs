@@ -32,6 +32,8 @@ public sealed class FigmaBridgeServer(ILogger<FigmaBridgeServer> logger) : IHost
     /// <summary>Figmaプラグインが現在接続中かどうか。</summary>
     public bool IsPluginConnected => _socket is { State: WebSocketState.Open };
 
+    public bool IsListening => _listener is { IsListening: true };
+
     public Task StartAsync(CancellationToken cancellationToken)
     {
         _cts = new CancellationTokenSource();
@@ -205,6 +207,13 @@ public sealed class FigmaBridgeServer(ILogger<FigmaBridgeServer> logger) : IHost
         TimeSpan? timeout = null,
         CancellationToken cancellationToken = default)
     {
+        if (!IsListening)
+        {
+            throw new FigmaBridgeException(
+                "Figmaブリッジは待ち受けていません。WindowsComputerUseMcp:BackgroundServices:EnableFigmaBridge=true を指定して " +
+                "MCP セッションを再起動してください。有効化済みの場合はポート9877の競合をログで確認してください。");
+        }
+
         WebSocket? socket;
         lock (_socketLock)
         {

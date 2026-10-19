@@ -19,6 +19,8 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _pollTimer;
     private readonly ObservableCollection<AuditLogRow> _logRows = [];
     private bool _isBusy;
+    private bool _isPolling;
+    private int _stateVersion;
 
     public MainWindow()
     {
@@ -45,6 +47,7 @@ public partial class MainWindow : Window
         }
 
         _isBusy = true;
+        _stateVersion++;
         try
         {
             var response = await _ipcClient.SendAsync(IpcCommand.Activate, "ControlPanel の「緊急停止」ボタン");
@@ -64,6 +67,7 @@ public partial class MainWindow : Window
         }
 
         _isBusy = true;
+        _stateVersion++;
         try
         {
             var response = await _ipcClient.SendAsync(IpcCommand.Deactivate);
@@ -83,13 +87,25 @@ public partial class MainWindow : Window
 
     private async Task PollAsync()
     {
-        if (_isBusy)
+        if (_isBusy || _isPolling)
         {
             return;
         }
 
-        var response = await _ipcClient.SendAsync(IpcCommand.Status);
-        ApplyResponse(response);
+        _isPolling = true;
+        var version = _stateVersion;
+        try
+        {
+            var response = await _ipcClient.SendAsync(IpcCommand.Status);
+            if (version == _stateVersion)
+            {
+                ApplyResponse(response);
+            }
+        }
+        finally
+        {
+            _isPolling = false;
+        }
     }
 
     private void ApplyResponse(IpcResponse? response)
@@ -103,11 +119,17 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (response.EmergencyStopActive)
+        if (!response.Success)
+        {
+            StatusBanner.Background = new SolidColorBrush(Color.FromRgb(0xFF, 0x8F, 0x00));
+            StatusText.Text = "状態未確認（一部または全サーバーで失敗）";
+            StatusDetailText.Text = response.Message ?? string.Empty;
+        }
+        else if (response.EmergencyStopActive)
         {
             StatusBanner.Background = new SolidColorBrush(Color.FromRgb(0xD3, 0x2F, 0x2F));
-            StatusText.Text = "緊急停止中";
-            StatusDetailText.Text = "入力系ツール（mouse_*/keyboard_*）は拒否されます。「解除」で復帰します。";
+            StatusText.Text = "緊急停止中（一部または全サーバー）";
+            StatusDetailText.Text = "停止状態のサーバーは入力を拒否します。「緊急停止」で全接続先を停止し、「解除」で復帰します。";
         }
         else
         {

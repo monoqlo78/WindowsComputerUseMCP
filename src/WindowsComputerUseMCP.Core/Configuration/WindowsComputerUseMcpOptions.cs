@@ -22,6 +22,12 @@ public sealed class UiAutomationSettings
     public int MaxTreeDepth { get; set; } = 10;
 }
 
+/// <summary>ツール発見だけでは必要ない常駐機能の明示的な有効化設定。</summary>
+public sealed class BackgroundServicesSettings
+{
+    public bool EnableFigmaBridge { get; set; }
+}
+
 /// <summary>appsettings.json / ユーザー設定のルート設定オブジェクト。</summary>
 public sealed class WindowsComputerUseMcpOptions
 {
@@ -31,4 +37,5 @@ public sealed class WindowsComputerUseMcpOptions
     public SafetySettings Safety { get; set; } = new();
     public LoggingSettings Logging { get; set; } = new();
     public UiAutomationSettings UiAutomation { get; set; } = new();
+    public BackgroundServicesSettings BackgroundServices { get; set; } = new();
 }

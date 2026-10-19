@@ -22,11 +22,17 @@ using WindowsComputerUseMCP.Skills.Figma;
 using WindowsComputerUseMCP.Skills.Generic;
 using WindowsComputerUseMCP.Skills.Illustrator;
 
-var builder = Host.CreateApplicationBuilder(args);
+var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
+{
+    Args = args,
+    ContentRootPath = AppContext.BaseDirectory,
+});
 
 // ユーザー固有設定（%LOCALAPPDATA%\WindowsComputerUseMCP\usersettings.json）があれば
 // appsettings.json の値を上書きする。存在しない場合は無視する。
 builder.Configuration.AddJsonFile(UserDataPaths.UserSettingsFilePath, optional: true, reloadOnChange: false);
+builder.Configuration.AddEnvironmentVariables();
+builder.Configuration.AddCommandLine(args);
 
 // 標準出力は MCP の JSON-RPC 通信専用のため、コンソールロガーは必ず標準エラー出力へ流す。
 builder.Logging.AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Trace);
@@ -49,7 +55,11 @@ builder.Services.AddSingleton<IInputService, InputService>();
 builder.Services.AddSingleton<IScreenChangeService, ScreenChangeService>();
 builder.Services.AddSingleton<IBackgroundDesktopService, BackgroundDesktopService>();
 
-// ControlPanel 連携（緊急停止ホットキー・IPCサーバー）
+var backgroundServices = builder.Configuration
+    .GetSection($"{WindowsComputerUseMcpOptions.SectionName}:BackgroundServices")
+    .Get<BackgroundServicesSettings>() ?? new();
+
+// 緊急停止の安全機構は、MCP クライアントがサーバーを起動している間は維持する。
 builder.Services.AddHostedService<HotkeyListenerService>();
 builder.Services.AddHostedService<WindowsComputerUseMCP.Server.Services.ControlPanelIpcServer>();
 
@@ -60,7 +70,10 @@ builder.Services.AddSingleton<ISkillPack, IllustratorSkillPack>();
 
 // Figmaブリッジ（本サーバーがWebSocketサーバーを開き、Figma側の専用プラグインが接続してくる）
 builder.Services.AddSingleton<FigmaBridgeServer>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<FigmaBridgeServer>());
+if (backgroundServices.EnableFigmaBridge)
+{
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<FigmaBridgeServer>());
+}
 builder.Services.AddSingleton<ISkillPack, FigmaSkillPack>();
 
 foreach (var appDefinition in BuiltInAppDefinitions.All)

@@ -49,30 +49,35 @@ dotnet test
 
 ## MCP クライアントへの登録方法（GitHub Copilot / VS Code）
 
-### インストールスクリプトを使う（推奨）
+### 既定は未登録・未起動（必要なときだけ有効化）
+
+**stdio MCP は、登録されたクライアントが接続・ツール発見のためにプロセスを起動する方式です。**
+ツールを一度も呼ばなくても起動され、CLI/GUI の複数セッションがそれぞれ別プロセスを作る場合があります。
+サーバー側には「このセッションで今後使われない」を判断する方法はありません。
+未使用時の起動を防ぐには、**クライアントでサーバーを無効化するか、登録しない**でください。
+ツールのチェックを外すだけ、またはプロセスを一度終了するだけでは再起動の防止になりません。
+
+インストーラは**既定では**クライアント設定を変更せず、起動検証も行いません。
+既存の登録は自動削除・無効化されないため、更新前に各クライアントで無効化してください。
+
+### 配置・更新（クライアントの登録とは別操作）
 
 ```powershell
-# ビルド → %LOCALAPPDATA% へ配置 → 起動検証まで一括で実行
+# ビルド → %LOCALAPPDATA% へ配置のみ。登録・起動・既存プロセスの強制停止はしない
 .\scripts\install-mcp-server.ps1
 
-# GitHub Copilot CLI の設定ファイルも自動で書き換える場合
+# 明示的に、一時プロセスで MCP ハンドシェイクを検証する場合だけ指定
+.\scripts\install-mcp-server.ps1 -Verify
+
+# 利用者が明示的に Copilot CLI へ登録する場合だけ（接続時に起動される場合あり）
 .\scripts\install-mcp-server.ps1 -UpdateClientConfig
+
+# Playwright も必要な場合だけ追加指定
+.\scripts\install-mcp-server.ps1 -UpdateClientConfig -RegisterPlaywright
 ```
 
-スクリプトは次の処理を行います。
-
-1. 実行中の `WindowsComputerUseMCP.Server` プロセスを停止する
-2. `dotnet publish -c Release` を実行して `%LOCALAPPDATA%\WindowsComputerUseMCP\staging` に出力する
-   （MCP サーバー本体と `wcu-desktop-launcher` の両方）
-3. `%LOCALAPPDATA%\WindowsComputerUseMCP\current` へ差し替える
-   （ランチャーは `current\launcher\`、ブラウザ設定は `current\playwright-mcp-background.config.json`）
-4. MCP ハンドシェイク（`initialize` → `tools/list`）を実行し、ツールが公開されているか検証する
-5. `-UpdateClientConfig` 指定時は `%USERPROFILE%\.copilot\mcp-config.json` の `command` を更新する
-   （変更前の内容はタイムスタンプ付き `.bak` として保存されます）
-6. あわせて **`playwright-bg`**（バックグラウンドで動く Playwright MCP）を登録する
-   （`-SkipPlaywright` を付けると登録をスキップできます）
-
-配置先の実行ファイルは次のパスになります。
+更新先を使用するクライアントを先に無効化・終了してください。使用中ならスクリプトはエラーで停止します。
+`dotnet publish -c Release` でサーバーとランチャーを一意の一時ディレクトリにビルドし、次の場所に配置します。
 
 ```
 %LOCALAPPDATA%\WindowsComputerUseMCP\current\WindowsComputerUseMCP.Server.exe
@@ -85,20 +90,39 @@ dotnet test
 > **古いバイナリを掴んだまま**になり、新しく追加したツールが一切現れません。
 > publish 済みの独立したディレクトリを登録することで、この問題を回避できます。
 
-### 更新するとき
+更新は引数なしで行い、登録・有効化は必要時に明示してください。
+既存の `-UpdateClientConfig` は維持しますが、登録するのは `windows-computer-use` のみです。
+`playwright-bg` の追加・更新にはさらに `-RegisterPlaywright` が必要です。
+既存の `-SkipPlaywright` / `-SkipVerify` は互換用に受け付け、どちらも省略が既定です。
+明示登録時は設定のバックアップを保存し、他サーバーや既存の WCU 設定の追加プロパティを維持します。
+`-Verify` は任意の一時起動であり、常駐登録は行いません。
+
+### GitHub Copilot CLI：有効化・無効化
+
+初回登録は**実際に使うときだけ**実行します（追加時に起動されることがあります）。
 
 ```powershell
-git pull
-.\scripts\install-mcp-server.ps1 -UpdateClientConfig
+copilot mcp add windows-computer-use -- "$env:LOCALAPPDATA\WindowsComputerUseMCP\current\WindowsComputerUseMCP.Server.exe"
+
+# 使わない間はこちら。設定は保持し、有効化を明示するまで無効のまま
+copilot mcp disable windows-computer-use
+copilot mcp disable playwright-bg # こちらも登録している場合
+
+# 次に必要になったときだけ
+copilot mcp enable windows-computer-use
+# playwright-bg は必要な場合だけ個別に enable する
 ```
 
-実行後、**MCP クライアント（GitHub Copilot CLI / VS Code）を再起動**してください。
-再起動するまで新しいツールは読み込まれません。
+対話モードでは `/mcp disable windows-computer-use` / `/mcp enable windows-computer-use` も利用できます。
+別途起動済みの CLI/GUI セッションは閉じてから再開してください。古いクライアントに disable がない場合は、
+`mcp-config.json` をバックアップして該当エントリを削除し、必要時に上記コマンドで再登録します。
+設定ファイルは通常 `%USERPROFILE%\.copilot\mcp-config.json`（`COPILOT_HOME` 指定時はその配下）です。
+本製品は非標準の `"disabled": true` などを勝手に書き込みません。
 
-### VS Code に手動で登録する場合
+### VS Code：必要なワークスペースだけに手動登録
 
-ワークスペース単位なら `.vscode/mcp.json`、全体に適用するならコマンドパレットの
-**MCP: Open User Configuration** から以下を追加します。
+全ワークスペースに効くユーザー登録より、使用するワークスペースの `.vscode/mcp.json` を推奨します。
+以下は**有効な登録例**であり、保存するとクライアントが起動する場合があります。
 
 ```json
 {
@@ -111,8 +135,13 @@ git pull
 }
 ```
 
-登録後、Chat ビューでツールの利用を許可すると、`window_list` や `screen_capture` などの
-ツールがエージェントから呼び出せるようになります。
+未使用時は **MCP: List Servers** から対象サーバーを **Disable**、必要時に **Enable / Start** します。
+`playwright-bg`、ユーザー設定・他アプリからの発見設定・他ワークスペースの登録も個別に確認してください。
+`"chat.mcp.autostart": "never"` は補助設定ですが、Copilot の Agent Host が独立して開始する
+セッションまでは抑止しないため、**登録の無効化・削除の代わりにはなりません**。
+
+参照：[Copilot CLI の公式登録・管理手順](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers) /
+[VS Code の管理・自動起動の説明](https://code.visualstudio.com/docs/agent-customization/mcp-servers)。
 
 > **注意**: 本サーバーはローカルマシンのマウス・キーボード・画面を直接操作します。信頼できるプロンプト・
 > エージェントからのみ利用し、[SECURITY.md](SECURITY.md) の安全設計（緊急停止・承認要求・監査ログ）を
@@ -263,20 +292,22 @@ MCP の JSON-RPC (stdio) は素通しで流れます。ラッパーによる通�
 
 #### 登録例（Playwright MCP をバックグラウンド化する）
 
-`scripts/install-mcp-server.ps1 -UpdateClientConfig` を実行すると、
-`playwright-bg` というエントリが自動で登録されます。手動で書く場合は次の形です。
+インストーラは既定で `playwright-bg` を登録しません。必要な場合だけ `-UpdateClientConfig -RegisterPlaywright`
+を指定するか、次の例を手動で追加してください。
+パスは実際の絶対パスに置き換えてください（クライアントが `%LOCALAPPDATA%` を展開するとは限りません）。
+追加によりクライアント起動時にランチャーや Node が動く場合があるため、未使用時は上記の方法で無効化します。
 
 ```jsonc
 {
   "mcpServers": {
     "playwright-bg": {
       "type": "local",
-      "command": "%LOCALAPPDATA%\\WindowsComputerUseMCP\\current\\launcher\\wcu-desktop-launcher.exe",
+      "command": "C:\\Users\\<ユーザー名>\\AppData\\Local\\WindowsComputerUseMCP\\current\\launcher\\wcu-desktop-launcher.exe",
       "args": [
         "--desktop", "WCU_Background", "--",
         "cmd.exe", "/c", "npx", "-y", "@playwright/mcp@latest",
         "--browser", "msedge",
-        "--config", "%LOCALAPPDATA%\\WindowsComputerUseMCP\\current\\playwright-mcp-background.config.json"
+        "--config", "C:\\Users\\<ユーザー名>\\AppData\\Local\\WindowsComputerUseMCP\\current\\playwright-mcp-background.config.json"
       ],
       "tools": ["*"]
     }
@@ -401,11 +432,18 @@ Blenderのような3Dビューポート中心のアプリは、キャンバス�
 
 ## 緊急停止（Emergency Stop）
 
-- **グローバルホットキー**: 既定 `Ctrl+Shift+F12`（`appsettings.json` の `Safety.EmergencyStopHotkey` で変更可能）。
-  Server プロセスが起動している間、フォーカスに関係なく OS 全体で有効です。
+- **グローバルホットキー**: 従来どおり Server 起動中は `Ctrl+Shift+F12` を登録します
+  （`Safety.EmergencyStopHotkey` で変更可能）。実操作中の安全機構は弱体化しません。
+  同じキーを登録できるのは通常1プロセスだけであり、ホットキーはそのプロセスのみを停止します。
+  複数セッションでは ControlPanel の全接続先への緊急停止を使用してください。
 - **ControlPanel（WPF）アプリ**からも「緊急停止」「解除」ボタンで同じ状態を切り替えられます。
-  ControlPanel と Server は名前付きパイプ（`WindowsComputerUseMCP.ControlPanel.v1`）で通信するため、
-  どちらのプロセスを先に起動しても問題ありません（Server 未起動時は「サーバー未接続」と表示されます）。
+  Server はプロセス別パイプ `WindowsComputerUseMCP.ControlPanel.v1.<WindowsセッションID>.<PID>` を公開し、
+  ControlPanel は同一ユーザー・Windows セッションの検出済みサーバーすべてに要求を送ります。
+  1件でも失敗すれば正常表示にはせず、混在状態は「一部または全サーバー」と表示します。
+  Server 未起動時は「サーバー未接続」であり、ControlPanel が Server を起動することはありません。
+  新たに起動したプロセスには過去の停止状態は引き継がれません。
+  JSON の要求・応答形式は従来どおりで、新 ControlPanel は旧固定名パイプも検出しますが、
+  旧 ControlPanel は新プロセス別パイプを検出できません。両方を更新してください。
 - 緊急停止が有効な間、`mouse_*` / `keyboard_*` / `ui_invoke` などの入力系ツールはすべて拒否されます。
   `window_list` / `screen_capture` など読み取り系ツールは、状況確認と解除操作を妨げないため継続して利用できます。
 
@@ -415,6 +453,29 @@ ControlPanel は次のようにビルド・起動します。
 dotnet build src\WindowsComputerUseMCP.ControlPanel
 .\src\WindowsComputerUseMCP.ControlPanel\bin\Debug\net10.0-windows\WindowsComputerUseMCP.ControlPanel.exe
 ```
+
+### 常駐機能の明示的な有効化
+
+Figma WebSocket リスナー（ポート9877）は既定無効です。必要な場合だけ
+`%LOCALAPPDATA%\WindowsComputerUseMCP\usersettings.json` に指定し、対象 MCP セッションを再起動してください。
+以下は Figma 連携を有効にする例です。
+
+```json
+{
+  "WindowsComputerUseMcp": {
+    "BackgroundServices": {
+      "EnableFigmaBridge": true
+    }
+  }
+}
+```
+
+無効時も読み取りや通常のツールは使え、緊急停止ホットキー・ControlPanel IPC の非同期待機・安全ポリシーは維持されます。
+Figma プラグイン接続を使うアクションには `EnableFigmaBridge: true` が必要です。
+ポートは1プロセスだけが所有するため、Figma を使うセッションのみで有効化してください。
+クライアントの `env` には `WindowsComputerUseMcp__BackgroundServices__EnableFigmaBridge` を `"true"` として
+指定することもできます。設定の優先順は配置先 appsettings → usersettings → 環境変数 → コマンドラインです。
+ツール一覧取得だけで画面監視・隠しデスクトップ作成・ブラウザ起動は行いません。
 
 ## 監査ログ
 

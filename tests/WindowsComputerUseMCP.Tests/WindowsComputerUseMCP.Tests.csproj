@@ -14,10 +14,15 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
   </ItemGroup>
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <!-- Exercise IPC without starting the MCP host, UI, hotkeys or native desktop services. -->
+    <Compile Include="..\..\src\WindowsComputerUseMCP.Server\Services\ControlPanelIpcServer.cs" Link="Ipc\ControlPanelIpcServer.cs" />
+    <Compile Include="..\..\src\WindowsComputerUseMCP.ControlPanel\Services\ServerIpcClient.cs" Link="Ipc\ServerIpcClient.cs" />
+    <Compile Include="..\..\src\WindowsComputerUseMCP.Skills\Figma\FigmaBridgeServer.cs" Link="Skills\FigmaBridgeServer.cs" />
   </ItemGroup>
 
   <ItemGroup>

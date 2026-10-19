@@ -35,13 +35,22 @@
 
 ## 緊急停止
 
-- ホットキー: **Ctrl + Shift + F12**（初期案。設定ファイルで変更可能にする）。
+- ホットキーは従来どおり Server 起動中に **Ctrl + Shift + F12**（設定で変更可能）を登録する。
+  同じキーの登録を共有できないため、
+  複数 MCP プロセスを停止するには ControlPanel を使用する。
 - 緊急停止が有効な間、入力操作系 MCP ツール（`mouse_*`, `keyboard_*`, `ui_invoke`, `window_focus` の実行操作部分等）
   はすべて拒否し、読み取り系ツール（`window_list`, `screen_capture` など）は継続して利用できるようにする
   （状況確認と解除操作を妨げないため）。
 - 緊急停止状態は Safety 層でプロセス内状態として保持する。ControlPanel（WPF）は名前付きパイプ
-  (`WindowsComputerUseMCP.ControlPanel.v1`) 経由で状態の問い合わせ・有効化・解除を行える
-  （フェーズ7で実装済み。`ControlPanelIpcServer` / `ServerIpcClient` 参照）。
+  (`WindowsComputerUseMCP.ControlPanel.v1.<WindowsセッションID>.<PID>`) 経由で同一ユーザー・セッションの
+  検出済みサーバー全件に問い合わせ・有効化・解除を行う。パイプは `CurrentUserOnly` で保護する。
+  部分失敗は成功扱いにせず表示する。新たに起動したプロセスには過去の停止状態を引き継がない。
+  旧固定名パイプの検出も維持するが、新サーバーには新 ControlPanel が必要。
+  サーバー側の1要求の処理時間は2秒に制限し、固定名競合・アクセス拒否では受付を停止、
+  その他のI/Oエラーも上限付き指数バックオフとする（`ControlPanelIpcServer` / `ServerIpcClient`）。
+
+MCP サーバーの登録・有効化は明示操作とする。インストーラは既定でグローバル設定を変更せず、
+既定でサーバーを起動しない。Figma リスナーも `BackgroundServices.EnableFigmaBridge` の明示指定が必要。
 
 ## パスワード・機密情報の扱い
 

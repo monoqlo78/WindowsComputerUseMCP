@@ -11,34 +11,69 @@ namespace WindowsComputerUseMCP.Server.Services;
 /// <summary>
 /// ControlPanel (WPF) からの名前付きパイプ接続を受け付け、緊急停止の状態取得/切り替えを提供するホストサービス。
 /// 1接続につき1リクエスト/1レスポンス（改行区切りJSON）を処理し、切断後は次の接続を待ち受ける。
-/// Server は常駐しないstdioプロセスのため、ControlPanel側は接続失敗を「未接続」として扱う。
+/// MCP プロセスごとに専用パイプを公開し、ControlPanel 側で全接続先への要求結果を集約する。
 /// </summary>
-public sealed class ControlPanelIpcServer(IEmergencyStopService emergencyStop, ILogger<ControlPanelIpcServer> logger) : BackgroundService
+public sealed class ControlPanelIpcServer(
+    IEmergencyStopService emergencyStop,
+    ILogger<ControlPanelIpcServer> logger,
+    string? pipeName = null) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        var consecutiveFailures = 0;
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
                 await using var pipe = new NamedPipeServerStream(
-                    IpcConstants.PipeName,
+                    pipeName ?? IpcConstants.ProcessPipeName,
                     PipeDirection.InOut,
                     maxNumberOfServerInstances: 1,
                     PipeTransmissionMode.Byte,
-                    PipeOptions.Asynchronous);
+                    PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
 
                 await pipe.WaitForConnectionAsync(stoppingToken).ConfigureAwait(false);
-                await HandleClientAsync(pipe, stoppingToken).ConfigureAwait(false);
+                using var requestCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                requestCts.CancelAfter(IpcConstants.RequestTimeoutMs);
+                try
+                {
+                    await HandleClientAsync(pipe, requestCts.Token).ConfigureAwait(false);
+                    consecutiveFailures = 0;
+                }
+                catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
+                {
+                    logger.LogDebug("ControlPanel IPC リクエストがタイムアウトしました。");
+                }
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
-                // シャットダウン中の待機キャンセルは正常終了。
+                return;
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                logger.LogError(ex, "ControlPanel IPC を開始できません。アクセス権を確認してください。IPC を停止します。");
+                return;
             }
             catch (IOException ex)
             {
-                logger.LogWarning(ex, "ControlPanel IPC パイプの処理中にI/Oエラーが発生しました。再試行します。");
-                await Task.Delay(500, stoppingToken).ConfigureAwait(false);
+                var error = ex.HResult & 0xFFFF;
+                if (error is 5 or 231 || ++consecutiveFailures >= 5)
+                {
+                    logger.LogError(ex, "ControlPanel IPC の競合または継続的なI/Oエラーにより IPC を停止します。");
+                    return;
+                }
+
+                var delay = TimeSpan.FromSeconds(Math.Pow(2, consecutiveFailures - 1));
+                logger.LogWarning(ex, "ControlPanel IPC I/Oエラー（コード {Error}）。{Delay} 後に再試行します（{Attempt}/5）。",
+                    error, delay, consecutiveFailures);
+                try
+                {
+                    await Task.Delay(delay, stoppingToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    return;
+                }
             }
         }
     }
