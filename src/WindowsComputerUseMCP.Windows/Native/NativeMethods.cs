@@ -240,6 +240,7 @@ internal static class NativeMethods
         public nint lParam;
         public uint time;
         public POINT pt;
+        public uint lPrivate;
     }
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]

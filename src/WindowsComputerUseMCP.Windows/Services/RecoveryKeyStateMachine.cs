@@ -5,24 +5,28 @@ public sealed class RecoveryKeyStateMachine
 {
     private bool _escapeDown;
     private bool _homeDown;
+    private bool _escapeCaptured;
+    private bool _homeCaptured;
     private bool _leftWindowsDown;
     private bool _rightWindowsDown;
     private bool _windowsKeyUsedAsModifier;
 
-    public RecoveryKeyAction Process(uint virtualKey, bool keyDown, bool anotherModifierIsDown = false)
+    public RecoveryKeyAction Process(
+        uint virtualKey, bool keyDown, bool anotherModifierIsDown = false, bool injected = false)
     {
+        if (injected)
+        {
+            return new RecoveryKeyAction(false, false);
+        }
+
         if (virtualKey == 0x1B)
         {
-            var wasDown = _escapeDown;
-            _escapeDown = keyDown;
-            return new RecoveryKeyAction(!keyDown && wasDown, true);
+            return ProcessPlainKey(ref _escapeDown, ref _escapeCaptured, keyDown, anotherModifierIsDown);
         }
 
         if (virtualKey == 0x24)
         {
-            var wasDown = _homeDown;
-            _homeDown = keyDown;
-            return new RecoveryKeyAction(!keyDown && wasDown, true);
+            return ProcessPlainKey(ref _homeDown, ref _homeCaptured, keyDown, anotherModifierIsDown);
         }
 
         if (virtualKey is 0x5B or 0x5C)
@@ -31,10 +35,12 @@ public sealed class RecoveryKeyStateMachine
             {
                 if (virtualKey == 0x5B)
                 {
+                    _windowsKeyUsedAsModifier |= _rightWindowsDown;
                     _leftWindowsDown = true;
                 }
                 else
                 {
+                    _windowsKeyUsedAsModifier |= _leftWindowsDown;
                     _rightWindowsDown = true;
                 }
 
@@ -67,6 +73,28 @@ public sealed class RecoveryKeyStateMachine
         }
 
         return new RecoveryKeyAction(false, false);
+    }
+
+    private RecoveryKeyAction ProcessPlainKey(
+        ref bool wasDown, ref bool captured, bool keyDown, bool anotherModifierIsDown)
+    {
+        if (keyDown)
+        {
+            _windowsKeyUsedAsModifier |= _leftWindowsDown || _rightWindowsDown;
+            if (!wasDown)
+            {
+                captured = !anotherModifierIsDown && !_leftWindowsDown && !_rightWindowsDown;
+            }
+
+            wasDown = true;
+            return new RecoveryKeyAction(false, captured);
+        }
+
+        var suppress = captured;
+        var recover = wasDown && captured && !anotherModifierIsDown && !_leftWindowsDown && !_rightWindowsDown;
+        wasDown = false;
+        captured = false;
+        return new RecoveryKeyAction(recover, suppress);
     }
 }
 

@@ -37,6 +37,7 @@ public sealed class BackgroundDesktopService : IBackgroundDesktopService, IDispo
     private readonly ConcurrentDictionary<string, DesktopContext> _desktops = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _switchLock = new(1, 1);
     private string? _lastRecoveryDesktopName;
+    private nint _recoveryProcess;
     private bool _disposed;
 
     public Task<BackgroundDesktopInfo> CreateAsync(BackgroundDesktopCreateRequest request, CancellationToken cancellationToken = default)
@@ -85,30 +86,49 @@ public sealed class BackgroundDesktopService : IBackgroundDesktopService, IDispo
     public async Task<BackgroundDesktopActionResult> CloseAsync(BackgroundDesktopCloseRequest request, CancellationToken cancellationToken = default)
     {
         var name = ValidateName(request.DesktopName);
-        if (!_desktops.TryRemove(name, out var context))
+        await _switchLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            return new BackgroundDesktopActionResult
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            var recoveryError = CheckPriorRecovery();
+            if (recoveryError is not null)
             {
-                Executed = false,
-                DesktopName = name,
-                Reason = "このMCPサーバーが管理しているバックグラウンドデスクトップではありません。",
-            };
-        }
-
-        if (request.TerminateProcesses)
-        {
-            foreach (var pid in context.SnapshotProcessIds())
-            {
-                TryKillProcess(pid);
+                return FailedSwitch(name, recoveryError);
             }
 
-            // プロセス終了の反映を少し待つ（ウィンドウ破棄とデスクトップ解放の競合を避ける）。
-            await Task.Delay(300, cancellationToken).ConfigureAwait(false);
+            if (IsInputDesktop(name))
+            {
+                return FailedSwitch(name, "現在表示中のデスクトップは閉じられません。先にbackground_desktop_recoverで復帰してください。");
+            }
+
+            if (!_desktops.TryRemove(name, out var context))
+            {
+                return FailedSwitch(name, "このMCPサーバーが管理しているバックグラウンドデスクトップではありません。");
+            }
+
+            try
+            {
+                if (request.TerminateProcesses)
+                {
+                    foreach (var pid in context.SnapshotProcessIds())
+                    {
+                        TryKillProcess(pid);
+                    }
+
+                    await Task.Delay(300, CancellationToken.None).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                context.Dispose();
+            }
+
+            return new BackgroundDesktopActionResult { Executed = true, DesktopName = name };
         }
-
-        context.Dispose();
-
-        return new BackgroundDesktopActionResult { Executed = true, DesktopName = name };
+        finally
+        {
+            _switchLock.Release();
+        }
     }
 
     public async Task<BackgroundDesktopLaunchResult> LaunchAsync(BackgroundDesktopLaunchRequest request, CancellationToken cancellationToken = default)
@@ -407,9 +427,16 @@ public sealed class BackgroundDesktopService : IBackgroundDesktopService, IDispo
         var terminateAgentOnCleanup = true;
         try
         {
-            if (!NamePattern.IsMatch(targetName))
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (!TemporaryDesktopRecoveryState.IsOrdinaryDesktopName(targetName))
             {
-                return FailedSwitch(targetName, "デスクトップ名は英数字・ハイフン・アンダースコアのみ指定できます。");
+                return FailedSwitch(targetName, "デスクトップ名が不正、または予約されたsecure desktop名です。");
+            }
+
+            var priorRecoveryError = CheckPriorRecovery();
+            if (priorRecoveryError is not null)
+            {
+                return FailedSwitch(targetName, priorRecoveryError);
             }
 
             previous = DesktopNativeMethods.OpenInputDesktop(
@@ -420,7 +447,7 @@ public sealed class BackgroundDesktopService : IBackgroundDesktopService, IDispo
             }
 
             var previousName = DesktopNativeMethods.GetDesktopName(previous);
-            if (string.IsNullOrWhiteSpace(previousName))
+            if (!TemporaryDesktopRecoveryState.IsOrdinaryDesktopName(previousName))
             {
                 return FailedSwitch(targetName, "現在のデスクトップ名を取得できず、安全な復帰先を確保できませんでした。");
             }
@@ -457,6 +484,17 @@ public sealed class BackgroundDesktopService : IBackgroundDesktopService, IDispo
             }
 
             cancellationToken.ThrowIfCancellationRequested();
+            if (!IsInputDesktop(previousName))
+            {
+                return FailedSwitch(targetName, "復旧監視の準備中に入力デスクトップが変わったため、切替を中止しました。");
+            }
+
+            if (!DesktopNativeMethods.GetExitCodeProcess(recoveryProcess, out var agentExitCode) ||
+                agentExitCode != DesktopNativeMethods.STILL_ACTIVE)
+            {
+                return FailedSwitch(targetName, "復旧監視が切替前に終了したため、切替を中止しました。");
+            }
+
             var switched = DesktopNativeMethods.SwitchDesktop(target);
             if (!switched)
             {
@@ -467,6 +505,8 @@ public sealed class BackgroundDesktopService : IBackgroundDesktopService, IDispo
             }
 
             terminateAgentOnCleanup = false;
+            _recoveryProcess = recoveryProcess;
+            recoveryProcess = 0;
             _lastRecoveryDesktopName = previousName;
             if (!WaitForInputDesktop(targetName))
             {
@@ -511,12 +551,18 @@ public sealed class BackgroundDesktopService : IBackgroundDesktopService, IDispo
         await _switchLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             var targetName = string.IsNullOrWhiteSpace(desktopName)
                 ? _lastRecoveryDesktopName ?? "Default"
                 : desktopName.Trim();
-            if (!NamePattern.IsMatch(targetName))
+            if (!TemporaryDesktopRecoveryState.IsOrdinaryDesktopName(targetName))
             {
-                return FailedSwitch(targetName, "復旧先デスクトップ名が不正です。");
+                return FailedSwitch(targetName, "復旧先デスクトップ名が不正、または予約されたsecure desktop名です。");
+            }
+
+            if (DesktopRecoveryAgent.InputDesktopName() is null)
+            {
+                return FailedSwitch(targetName, "入力デスクトップにアクセスできません。secure desktopやWindowsロック中は操作しません。");
             }
 
             var target = DesktopNativeMethods.OpenDesktopW(targetName, 0, false, DesktopNativeMethods.DESKTOP_SWITCHDESKTOP);
@@ -553,6 +599,30 @@ public sealed class BackgroundDesktopService : IBackgroundDesktopService, IDispo
 
     private static BackgroundDesktopActionResult FailedSwitch(string desktopName, string reason)
         => new() { Executed = false, DesktopName = desktopName, Reason = reason };
+
+    private string? CheckPriorRecovery()
+    {
+        if (_recoveryProcess == 0)
+        {
+            return null;
+        }
+
+        if (!DesktopNativeMethods.GetExitCodeProcess(_recoveryProcess, out var exitCode))
+        {
+            return $"直前の復旧監視の状態を確認できません（Win32 error {Marshal.GetLastWin32Error()}）。追加の切替は拒否しました。";
+        }
+
+        if (exitCode == DesktopNativeMethods.STILL_ACTIVE)
+        {
+            return "直前の一時表示の復旧監視が実行中です。重複切替はできません。background_desktop_recoverで復帰してから再試行してください。";
+        }
+
+        DesktopNativeMethods.CloseHandle(_recoveryProcess);
+        _recoveryProcess = 0;
+        return exitCode == 0
+            ? null
+            : $"直前の復旧監視は終了コード{exitCode}で失敗しました。元画面を確認してください。今回は追加の切替を行っていません。";
+    }
 
     private static bool IsInputDesktop(string expectedName)
     {
@@ -730,19 +800,33 @@ public sealed class BackgroundDesktopService : IBackgroundDesktopService, IDispo
 
     public void Dispose()
     {
-        if (_disposed)
+        _switchLock.Wait();
+        try
         {
-            return;
-        }
-
-        _disposed = true;
-
-        foreach (var key in _desktops.Keys.ToList())
-        {
-            if (_desktops.TryRemove(key, out var context))
+            if (_disposed)
             {
-                context.Dispose();
+                return;
             }
+
+            _disposed = true;
+            if (_recoveryProcess != 0)
+            {
+                // サーバー終了時もhelperの自動復帰は停止させない。
+                DesktopNativeMethods.CloseHandle(_recoveryProcess);
+                _recoveryProcess = 0;
+            }
+
+            foreach (var key in _desktops.Keys.ToList())
+            {
+                if (_desktops.TryRemove(key, out var context))
+                {
+                    context.Dispose();
+                }
+            }
+        }
+        finally
+        {
+            _switchLock.Release();
         }
     }
 

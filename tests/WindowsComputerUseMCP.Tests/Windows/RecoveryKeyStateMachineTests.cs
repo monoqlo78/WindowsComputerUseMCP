@@ -94,4 +94,50 @@ public sealed class RecoveryKeyStateMachineTests
         Assert.True(handled);
         Assert.Equal(2, exitCode);
     }
+
+    [Theory]
+    [InlineData(0x1B)]
+    [InlineData(0x24)]
+    [InlineData(0x5B)]
+    public void InjectedInputCannotTriggerRecoveryOrChangePhysicalState(uint key)
+    {
+        var state = new RecoveryKeyStateMachine();
+        state.Process(key, true, injected: true);
+        var release = state.Process(key, false, injected: true);
+        Assert.False(release.ShouldRecover);
+        Assert.False(release.SuppressKey);
+        Assert.False(state.Process(key, false).ShouldRecover);
+    }
+
+    [Fact]
+    public void BothWindowsKeysAreNotASingleKeyGesture()
+    {
+        var state = new RecoveryKeyStateMachine();
+        state.Process(0x5B, true);
+        state.Process(0x5C, true);
+        Assert.False(state.Process(0x5B, false).ShouldRecover);
+        Assert.False(state.Process(0x5C, false).ShouldRecover);
+    }
+
+    [Theory]
+    [InlineData(0x1B)]
+    [InlineData(0x24)]
+    public void EscAndHomeWithModifiersPassThrough(uint key)
+    {
+        var state = new RecoveryKeyStateMachine();
+        Assert.False(state.Process(key, true, anotherModifierIsDown: true).SuppressKey);
+        var release = state.Process(key, false);
+        Assert.False(release.ShouldRecover);
+        Assert.False(release.SuppressKey);
+    }
+
+    [Fact]
+    public void WinHomeDoesNotTriggerHomeOrStandaloneWindowsRecovery()
+    {
+        var state = new RecoveryKeyStateMachine();
+        state.Process(0x5B, true);
+        Assert.False(state.Process(0x24, true).SuppressKey);
+        Assert.False(state.Process(0x24, false).ShouldRecover);
+        Assert.False(state.Process(0x5B, false).ShouldRecover);
+    }
 }
